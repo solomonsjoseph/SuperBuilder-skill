@@ -25,8 +25,7 @@
     "vitest": "^1.6.0",
     "@vitest/coverage-v8": "^1.6.0"
   },
-  "dependencies": {},
-  "optionalDependencies": {
-    "sandcastle": "*"
+  "dependencies": {
+    "@ai-hero/sandcastle": "^0.5.8"
   }
 }

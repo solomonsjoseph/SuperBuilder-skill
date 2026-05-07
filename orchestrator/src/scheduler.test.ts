@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { run } from "./scheduler.js";
@@ -152,5 +153,139 @@ describe("scheduler policy integrity", () => {
     expect(mismatch.snapshot.deploymentAllowed).toBe(false);
     expect(mismatch.current.deploymentAllowed).toBe(true);
     expect(mismatch["fields-that-differ"]).toContain("deploymentAllowed");
+  }, 15000);
+});
+
+// --- Story-branch merge tests ----------------------------------------------
+//
+// In dryRun mode the scheduler doesn't actually create the story branch
+// (sandcastle is skipped). Our merge step is gated on the branch existing
+// on the host repo. By pre-creating it in a tmp git repo we exercise the
+// real ff-merge / conflict paths without needing docker/podman.
+
+function git(cwd: string, args: string[]): { status: number; stdout: string; stderr: string } {
+  const r = spawnSync("git", args, { cwd, encoding: "utf8" });
+  return { status: typeof r.status === "number" ? r.status : -1, stdout: r.stdout ?? "", stderr: r.stderr ?? "" };
+}
+
+function gitOk(cwd: string, args: string[]): void {
+  const r = git(cwd, args);
+  if (r.status !== 0) {
+    throw new Error(`git ${args.join(" ")} failed (${r.status}): ${r.stderr || r.stdout}`);
+  }
+}
+
+async function setupGitProjectAndPRDRoot(): Promise<{ project: string; root: string }> {
+  const project = await mkdtemp(join(tmpdir(), "sb-merge-proj-"));
+  // Init repo with `feature` as the target branch (matches makePRD).
+  gitOk(project, ["init", "-q", "-b", "feature"]);
+  gitOk(project, ["config", "user.email", "test@example.com"]);
+  gitOk(project, ["config", "user.name", "test"]);
+  await writeFile(join(project, "README.md"), "seed\n");
+  gitOk(project, ["add", "."]);
+  gitOk(project, ["commit", "-q", "-m", "seed"]);
+
+  // PRD root (separate from project root in this test, like real usage).
+  const root = await mkdtemp(join(tmpdir(), "sb-merge-root-"));
+  return { project, root };
+}
+
+async function seedPRD(root: string, prd: PRD): Promise<void> {
+  await writeFile(join(root, "prd.json"), JSON.stringify(prd, null, 2) + "\n");
+  for (const story of prd.userStories) {
+    const evDir = join(root, "evidence", story.id);
+    await mkdir(evDir, { recursive: true });
+    await writeFile(join(evDir, "diff.patch"), "fake diff for test\n");
+  }
+}
+
+describe("scheduler story-branch merge", () => {
+  it("happy path: ff-only merges the story branch into integration", async () => {
+    const { project, root } = await setupGitProjectAndPRDRoot();
+
+    // Pre-create the story branch with one new commit (simulating what
+    // sandcastle would have done).
+    const storyBranch = "superbuilder/US-001-first"; // slug of "first"
+    gitOk(project, ["checkout", "-q", "-b", storyBranch]);
+    await writeFile(join(project, "story.txt"), "story content\n");
+    gitOk(project, ["add", "."]);
+    gitOk(project, ["commit", "-q", "-m", "story commit"]);
+    const storySha = git(project, ["rev-parse", "HEAD"]).stdout.trim();
+    gitOk(project, ["checkout", "-q", "feature"]); // back to feature
+
+    // Only run the first story; second story would have no branch.
+    const prd = makePRD({ userStories: [makeStory({ id: "US-001", title: "first" })] });
+    await seedPRD(root, prd);
+    const store = await loadPRD(root);
+
+    const report = await run(
+      { root, projectRoot: project, provider: "docker", dryRun: true },
+      store,
+    );
+
+    expect(report.storiesPassed).toContain("US-001");
+    expect(report.storiesFailed).toEqual([]);
+
+    // Integration branch should exist and point to the story commit.
+    const ref = git(project, ["rev-parse", "superbuilder/integration"]).stdout.trim();
+    expect(ref).toBe(storySha);
+
+    // Story now passes and recorded the merged-up commit.
+    const reloaded = JSON.parse(await readFile(join(root, "prd.json"), "utf8")) as PRD;
+    const us = reloaded.userStories.find((s) => s.id === "US-001")!;
+    expect(us.passes).toBe(true);
+    expect(us.lastFailure).toBeNull();
+  }, 15000);
+
+  it("conflict path: non-ff merge sets lastFailure and restores prior branch", async () => {
+    const { project, root } = await setupGitProjectAndPRDRoot();
+
+    // Pre-create integration from feature, then advance integration with a
+    // commit on `story.txt`. Then create the story branch from feature with
+    // a different commit on the same file — ff-only will fail.
+    gitOk(project, ["branch", "superbuilder/integration", "feature"]);
+    gitOk(project, ["checkout", "-q", "superbuilder/integration"]);
+    await writeFile(join(project, "story.txt"), "integration version\n");
+    gitOk(project, ["add", "."]);
+    gitOk(project, ["commit", "-q", "-m", "integration touched story.txt"]);
+
+    gitOk(project, ["checkout", "-q", "feature"]);
+    const storyBranch = "superbuilder/US-001-first";
+    gitOk(project, ["checkout", "-q", "-b", storyBranch]);
+    await writeFile(join(project, "story.txt"), "story version\n");
+    gitOk(project, ["add", "."]);
+    gitOk(project, ["commit", "-q", "-m", "story version"]);
+
+    const priorBranch = "feature";
+    gitOk(project, ["checkout", "-q", priorBranch]); // start with feature
+
+    const prd = makePRD({ userStories: [makeStory({ id: "US-001", title: "first" })] });
+    await seedPRD(root, prd);
+    const store = await loadPRD(root);
+
+    const report = await run(
+      {
+        root,
+        projectRoot: project,
+        provider: "docker",
+        dryRun: true,
+        caps: { attemptsPerStory: 1 },
+      },
+      store,
+    );
+
+    expect(report.storiesFailed).toContain("US-001");
+
+    const reloaded = JSON.parse(await readFile(join(root, "prd.json"), "utf8")) as PRD;
+    const us = reloaded.userStories.find((s) => s.id === "US-001")!;
+    expect(us.passes).toBe(false);
+    expect(us.lastFailure).toBe("merge conflict with integration");
+
+    // Restored prior branch.
+    const head = git(project, ["rev-parse", "--abbrev-ref", "HEAD"]).stdout.trim();
+    expect(head).toBe(priorBranch);
+
+    // merge-conflict.md was written.
+    expect(existsSync(join(root, "evidence", "US-001", "merge-conflict.md"))).toBe(true);
   }, 15000);
 });
