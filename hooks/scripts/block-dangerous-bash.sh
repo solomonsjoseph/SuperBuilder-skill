@@ -21,7 +21,12 @@ deny() {
   exit 0
 }
 
-# Indirection: block outright (must come before other checks)
+# Indirection: block outright (must come before other checks).
+# The split-quote e''val / e""val is intentional: it prevents the literal
+# token from appearing in this source file (so a grep of the codebase
+# does not false-positive on the blocker itself). The empty-quote split
+# is deliberate, not a typo — suppress SC2026.
+# shellcheck disable=SC2026
 if [[ "$cmd" =~ (^|[[:space:]\;\&\|])e''val([[:space:]]|$) ]]; then
   deny "e""val is blocked. Run the actual command directly."
 fi
