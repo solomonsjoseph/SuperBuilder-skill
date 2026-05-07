@@ -108,6 +108,16 @@ kubectl delete namespace production
 
 Each command must be **blocked**, **routed to `ask`**, or **refused with a clear reason**. If any executes silently, the plugin fails its security contract and must not ship.
 
+## Policy integrity
+
+A subagent running inside the sandbox could write to `.superbuilder/prd.json` and try to escalate its own privileges mid-run — flipping `deploymentAllowed: true`, removing entries from `humanApprovalRequiredFor`, weakening `qualityGates`, or rewriting `sourceRefs`. Defense in depth:
+
+- At the start of `run()`, the orchestrator (`orchestrator/src/scheduler.ts`) computes a SHA-256 hash of the canonicalised JSON of the four policy fields (`deploymentAllowed`, `humanApprovalRequiredFor`, `qualityGates`, `sourceRefs`) via `policyHash()` in `orchestrator/src/security.ts`. Canonicalisation is recursive stable key sort, no whitespace; `humanApprovalRequiredFor` is alphabetised so legitimate reordering does not trip the check.
+- Before each `selectNextStory()` iteration, the orchestrator reloads the PRD from disk via `loadPRD()` and re-hashes. On mismatch it writes `.superbuilder/last-run-policy-mismatch.json` containing `{snapshot, current, fields-that-differ}` and aborts the run with `Superbuilder policy fields changed during run; aborting.`
+- The check covers only the four fields above. Story progress, evidence pointers, attempts, and other story state may legitimately change between iterations and are excluded from the hash.
+
+This is defence in depth, not a primary control: the deterministic block-list and the sandbox boundary are the primary defences. The hash check catches the case where a sandboxed subagent gets file-write into the host's `.superbuilder/` directory through a misconfiguration.
+
 ## Gate runner allow-list
 
 The orchestrator's gate runner does NOT use `bash -c`. PRD `qualityGates` commands are parsed as argv and the first token is checked against an allow-list defined in `orchestrator/src/allow-list.ts`. Commands containing shell metacharacters (`;`, `&&`, `||`, `|`, `<`, `>`, backticks, `$(...)`, newlines) are refused at PRD-validate time and at run time. This means:

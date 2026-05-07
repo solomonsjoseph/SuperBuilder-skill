@@ -193,6 +193,15 @@ Iteration caps (defaults; user-overridable):
 | `bin/*` | Shell dispatchers around the orchestrator |
 | `orchestrator/` | Story scheduler, gate runner, Sandcastle adapter, validator |
 
+## Quality gates: `failed` vs `errored`
+
+The gate runner (`orchestrator/src/gates.ts`) distinguishes two kinds of non-success outcomes so operators know whether to fix code or fix configuration:
+
+- **`failed`** — the gate program was spawned successfully and exited non-zero. This is a real test/lint/typecheck failure: the implementation under test does not meet the criterion. The scheduler records `gate failed: <name> (exit <n>)` in `lastFailure`, the operator should look at code.
+- **`errored`** — the gate could not even run as configured. Causes: shell-meta refusal, allow-list refusal, `spawn ENOENT` (program not on PATH), or the per-gate timeout (default 5 minutes). The scheduler records `gate misconfigured: <name> (<reason>)` in `lastFailure`, the operator should fix `qualityGates` in `prd.json` or the host environment, not application code.
+
+Errored outcomes still count toward `attemptsPerStory` — a misconfigured gate is not a free pass — but the failure note guides remediation toward configuration rather than implementation. Both `failed` and `errored` block the story from passing; `passed` and `skipped` (no command configured) do not.
+
 ## Branch policy
 
 - `targetBranch` — the user's existing branch; **never `main`** unless the user explicitly chooses it.

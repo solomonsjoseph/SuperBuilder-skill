@@ -7,13 +7,27 @@ import { ALLOWED_PROGRAMS, FORBIDDEN_TOKENS } from "./allow-list.js";
 
 export type GateName = keyof QualityGates;
 
+// Default per-gate wall-clock timeout. Five minutes is generous for typical
+// test/lint/typecheck commands; long-running suites should configure their
+// own wrapper script rather than block the orchestrator indefinitely.
+export const GATE_TIMEOUT_MS = 5 * 60 * 1000;
+
 export interface GateResult {
   gate: GateName;
   command: string | null;
-  status: "passed" | "failed" | "skipped";
+  // "passed"  : program spawned, exit 0
+  // "failed"  : program spawned, non-zero exit (real test/lint failure)
+  // "errored" : misconfiguration — allow-list refusal, shell-meta refusal,
+  //             ENOENT on spawn, or per-gate timeout. Distinguished from
+  //             "failed" so operators know to fix configuration, not code.
+  // "skipped" : no command configured for this gate.
+  status: "passed" | "failed" | "errored" | "skipped";
   exitCode: number | null;
   durationMs: number;
   evidencePath: string;
+  // Populated when status === "errored"; null otherwise. Used by the
+  // scheduler to write a human-readable "gate misconfigured" lastFailure.
+  reason: string | null;
 }
 
 const RELEVANT_PER_RISK: Record<UserStory["riskLevel"], GateName[]> = {
@@ -33,10 +47,15 @@ export function relevantGates(story: UserStory): GateName[] {
   return RELEVANT_PER_RISK[story.riskLevel];
 }
 
+type ShellOutcome =
+  | { kind: "exited"; exitCode: number }
+  | { kind: "errored"; reason: string };
+
 export async function runGate(
   gate: GateName,
   command: string | null,
   evidenceDir: string,
+  options: { timeoutMs?: number } = {},
 ): Promise<GateResult> {
   await mkdir(evidenceDir, { recursive: true });
   const evidencePath = join(evidenceDir, `${gate}.log`);
@@ -46,27 +65,49 @@ export async function runGate(
       join(evidenceDir, `${gate}.skipped.md`),
       `Gate ${gate} skipped: no command configured in qualityGates.\n`,
     );
-    return { gate, command: null, status: "skipped", exitCode: null, durationMs: 0, evidencePath };
+    return {
+      gate,
+      command: null,
+      status: "skipped",
+      exitCode: null,
+      durationMs: 0,
+      evidencePath,
+      reason: null,
+    };
   }
 
   const started = Date.now();
-  const result = await runShell(command, evidencePath);
+  const outcome = await runShell(command, evidencePath, options.timeoutMs ?? GATE_TIMEOUT_MS);
+  const durationMs = Date.now() - started;
+
+  if (outcome.kind === "errored") {
+    return {
+      gate,
+      command,
+      status: "errored",
+      exitCode: null,
+      durationMs,
+      evidencePath,
+      reason: outcome.reason,
+    };
+  }
   return {
     gate,
     command,
-    status: result.exitCode === 0 ? "passed" : "failed",
-    exitCode: result.exitCode,
-    durationMs: Date.now() - started,
+    status: outcome.exitCode === 0 ? "passed" : "failed",
+    exitCode: outcome.exitCode,
+    durationMs,
     evidencePath,
+    reason: null,
   };
 }
 
-async function refuse(logPath: string, message: string): Promise<{ exitCode: number }> {
+async function refuse(logPath: string, message: string): Promise<ShellOutcome> {
   await writeFile(logPath, `${message}\n`);
-  return { exitCode: 1 };
+  return { kind: "errored", reason: message };
 }
 
-function runShell(command: string, logPath: string): Promise<{ exitCode: number }> {
+function runShell(command: string, logPath: string, timeoutMs: number): Promise<ShellOutcome> {
   const trimmed = command.trim();
   if (!trimmed || FORBIDDEN_TOKENS.test(trimmed)) {
     return refuse(
@@ -89,14 +130,47 @@ function runShell(command: string, logPath: string): Promise<{ exitCode: number 
     const stream = createWriteStream(logPath, { flags: "w" });
     child.stdout?.pipe(stream, { end: false });
     child.stderr?.pipe(stream, { end: false });
+
+    let settled = false;
+    let timedOut = false;
+    const settle = (outcome: ShellOutcome): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      stream.end();
+      resolve(outcome);
+    };
+
+    const timer = setTimeout(() => {
+      timedOut = true;
+      stream.write(`\n[orchestrator] gate timed out after ${timeoutMs}ms; killing\n`);
+      try {
+        child.kill("SIGTERM");
+        // Hard-stop in case SIGTERM is ignored.
+        setTimeout(() => {
+          try { child.kill("SIGKILL"); } catch { /* ignore */ }
+        }, 1000).unref?.();
+      } catch {
+        // ignore
+      }
+      settle({
+        kind: "errored",
+        reason: `gate timed out after ${timeoutMs}ms`,
+      });
+    }, timeoutMs);
+    timer.unref?.();
+
     child.on("close", (code: number | null) => {
-      stream.end();
-      resolve({ exitCode: code ?? 1 });
+      if (timedOut) return; // already settled
+      settle({ kind: "exited", exitCode: code ?? 1 });
     });
-    child.on("error", (err: Error) => {
+    child.on("error", (err: NodeJS.ErrnoException) => {
+      if (timedOut) return;
       stream.write(`\n[orchestrator] failed to spawn: ${err.message}\n`);
-      stream.end();
-      resolve({ exitCode: 1 });
+      const reason = err.code === "ENOENT"
+        ? `spawn ENOENT: '${program}' not found on PATH`
+        : `spawn error: ${err.message}`;
+      settle({ kind: "errored", reason });
     });
   });
 }

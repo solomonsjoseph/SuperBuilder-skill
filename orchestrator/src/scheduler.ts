@@ -4,12 +4,13 @@ import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 import type { PRD, UserStory } from "./types.js";
 import { DEFAULT_CAPS } from "./types.js";
-import { selectNextStory, savePRD, evidenceComplete } from "./prd.js";
+import { selectNextStory, savePRD, evidenceComplete, loadPRD } from "./prd.js";
 import type { PRDStore } from "./prd.js";
 import { runGate, relevantGates } from "./gates.js";
 import type { GateResult } from "./gates.js";
 import { createSandbox } from "./sandcastle-runner.js";
 import type { Provider } from "./sandcastle-runner.js";
+import { policyHash, extractPolicy, policyDiff } from "./security.js";
 
 export interface RunOptions {
   root: string;          // .superbuilder dir
@@ -46,12 +47,47 @@ export async function run(opts: RunOptions, store: PRDStore): Promise<RunReport>
     );
   }
 
+  // Snapshot the PRD's security-relevant fields. Before each story we
+  // reload PRD from disk and re-hash; on mismatch we abort. Defense in
+  // depth against a subagent mutating .superbuilder/prd.json mid-run.
+  const policySnapshotHash = policyHash(store.prd);
+  const policySnapshot = extractPolicy(store.prd);
+
   let storiesRun = 0;
   while (true) {
     if (caps.fullRunStories !== null && storiesRun >= caps.fullRunStories) {
       report.notes.push(`Hit fullRunStories cap (${caps.fullRunStories}); stopping.`);
       break;
     }
+
+    // Re-verify policy integrity before picking the next story.
+    const reloaded = await loadPRD(opts.root);
+    const currentHash = policyHash(reloaded.prd);
+    if (currentHash !== policySnapshotHash) {
+      const currentPolicy = extractPolicy(reloaded.prd);
+      const fieldsThatDiffer = policyDiff(policySnapshot, currentPolicy);
+      await mkdir(opts.root, { recursive: true });
+      await writeFile(
+        join(opts.root, "last-run-policy-mismatch.json"),
+        JSON.stringify(
+          {
+            snapshot: policySnapshot,
+            current: currentPolicy,
+            "fields-that-differ": fieldsThatDiffer,
+          },
+          null,
+          2,
+        ) + "\n",
+      );
+      throw new Error(
+        "Superbuilder policy fields changed during run; aborting. See .superbuilder/last-run-policy-mismatch.json.",
+      );
+    }
+    // Replace the in-memory store with the disk truth so subsequent saves
+    // don't clobber legitimate non-policy edits made between iterations.
+    store.prd = reloaded.prd;
+    store.path = reloaded.path;
+
     const story = selectNextStory(store.prd);
     if (!story) {
       report.notes.push("No eligible stories remaining. Done.");
@@ -162,8 +198,9 @@ async function runOneStory(
     }
 
     const failures = gateResults.filter((r) => r.status === "failed");
+    const erroredGates = gateResults.filter((r) => r.status === "errored");
     const diffPath = join(evidenceDir, "diff.patch");
-    if (failures.length === 0) {
+    if (failures.length === 0 && erroredGates.length === 0) {
       // Path A: host-side capture. Works only when the orchestrator process is on
       // the story branch (e.g. dryRun, or when Sandcastle's branch sync is verified).
       const integration = store.prd.integrationBranch;
@@ -189,14 +226,25 @@ async function runOneStory(
           // ignore
         }
       }
-      if (evidenceComplete(story, evidenceDir) && failures.length === 0) {
+      if (evidenceComplete(story, evidenceDir) && failures.length === 0 && erroredGates.length === 0) {
         story.passes = true;
         story.lastFailure = null;
         await savePRD(store);
         return true;
       }
     }
-    story.lastFailure = failures.map((f) => `${f.gate} (exit ${f.exitCode})`).join("; ") || "evidence incomplete";
+    // Build distinct lastFailure strings: errored (misconfig) and failed
+    // (real test failure) get separate prefixes so operators know whether
+    // to fix configuration or fix code. Errored is surfaced first because
+    // a misconfigured gate blocks the operator's diagnostic.
+    const erroredParts = erroredGates.map(
+      (e) => `gate misconfigured: ${e.gate} (${e.reason ?? "unknown reason"})`,
+    );
+    const failedParts = failures.map(
+      (f) => `gate failed: ${f.gate} (exit ${f.exitCode})`,
+    );
+    const allParts = [...erroredParts, ...failedParts];
+    story.lastFailure = allParts.length > 0 ? allParts.join("; ") : "evidence incomplete";
     await savePRD(store);
   }
 
