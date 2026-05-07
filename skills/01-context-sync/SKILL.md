@@ -21,7 +21,7 @@ Stop agents from guessing the project's stack, conventions, or domain language. 
 2. **`domain.md`** — domain terms in the user's words. Pull from existing `CONTEXT.md`, `README.md`, ADRs, code comments. Mark conflicts where the same term means two things.
 3. **`tree.md`** — top-level directory map with one-line purpose per major folder.
 4. **`adrs.md`** — list of existing ADRs (path + title + date). Do NOT summarize them; just index them.
-5. **`gates.json`** — concrete commands for typecheck/lint/test/secret-scan/dep-audit derived from the project. If a gate has no command, mark it null — the orchestrator will skip and warn.
+5. **`gates.json`** — concrete commands for typecheck/lint/test/secret-scan/dep-audit derived from the project. Pre-populate by calling `defaultGates(stack)` from `orchestrator/src/gate-defaults.ts` with the detected `StackInfo`, then **show the result to the user and ask them to confirm or override every gate** before writing `.superbuilder/context/gates.json`. If a gate has no command, mark it null — the orchestrator will skip and warn.
 6. **`risks.md`** — pre-existing technical debt, brittle code paths, modules with no tests, hardcoded production assumptions.
 
 ## Package manager detection (use this exact order, never hardcode)

@@ -11,7 +11,7 @@ export const ALLOWED_PROGRAMS = new Set<string>([
   "bundle", "rspec", "rubocop",
   "composer", "phpunit", "phpstan",
   "eslint", "prettier", "stylelint", "biome",
-  "axe", "lighthouse", "trivy", "semgrep", "bandit",
+  "axe", "lighthouse", "pa11y", "trivy", "semgrep", "bandit",
   "shellcheck", "shfmt",
   "make",
 ]);

@@ -66,6 +66,11 @@ Superbuilder will:
 5. Iterate stories through Sandcastle with evidence-backed gates.
 6. Stop at PR-ready. **Production deploy is a separate, gated act.**
 
+Gates are pre-populated from stack detection (via `defaultGates()` in
+`orchestrator/src/gate-defaults.ts`) — review `.superbuilder/context/gates.json`
+and override any that don't match your project before letting the orchestrator
+run.
+
 ## Configuring providers
 
 The orchestrator defaults to `docker`. Override via `--provider`:
