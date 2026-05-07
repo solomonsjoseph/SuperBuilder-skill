@@ -264,6 +264,39 @@ describe("CLI verb: gates", () => {
   );
 
   it(
+    "non-array humanApprovalRequiredFor (bare string) => fail-closed, errored",
+    async () => {
+      // Locks the Array.isArray() guard: if a future regression drops it,
+      // a bare-string approvals field with the magic token would silently
+      // widen access. CLI reads PRD raw, so this hostile shape is reachable.
+      const tmp = await mkdtemp(join(tmpdir(), "sb-gates-hrshape-"));
+      const sb = join(tmp, ".superbuilder");
+      await mkdir(sb, { recursive: true });
+      const prd = maliciousPRD("node --version") as Record<string, unknown>;
+      // Replace the array with a bare string containing the magic token —
+      // a naive .some() without Array.isArray would treat string indexing
+      // as iteration and could match.
+      prd.humanApprovalRequiredFor = "exec gate command";
+      await writeFile(join(sb, "prd.json"), JSON.stringify(prd, null, 2));
+
+      const result = spawnSync(
+        process.execPath,
+        [DIST_INDEX, "gates", "US-001", "--root", sb, "--project", tmp],
+        { encoding: "utf8" },
+      );
+
+      expect(result.status).toBe(1);
+      const parsed = JSON.parse(result.stdout) as {
+        gates: Array<{ gate: string; status: string; reason: string | null }>;
+      };
+      const testGate = parsed.gates.find((g) => g.gate === "test")!;
+      expect(testGate.status).toBe("errored");
+      expect(testGate.reason).toMatch(/high-risk/);
+    },
+    20000,
+  );
+
+  it(
     "case-insensitive opt-in: 'EXEC GATE COMMAND' is honored",
     async () => {
       const tmp = await mkdtemp(join(tmpdir(), "sb-gates-hrcase-"));
