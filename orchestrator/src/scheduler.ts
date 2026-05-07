@@ -191,9 +191,15 @@ async function runOneStory(
     // Gates run regardless — they're the evidence.
     const gates = relevantGates(story);
     const gateResults: GateResult[] = [];
+    // Derived from store.prd — the in-memory snapshot loaded at run() start.
+    // store.prd is never replaced in-place; the policy-integrity check above
+    // would have aborted already if humanApprovalRequiredFor was tampered.
+    const allowedHighRisk = store.prd.humanApprovalRequiredFor.some(
+      (entry) => entry.toLowerCase() === "exec gate command",
+    );
     for (const g of gates) {
       const cmd = store.prd.qualityGates[g];
-      const result = await runGate(g, cmd, evidenceDir);
+      const result = await runGate(g, cmd, evidenceDir, { allowedHighRisk });
       gateResults.push(result);
       if (g === "test" && result.evidencePath) story.evidence.tests.push(result.evidencePath);
       if (g === "browser" && result.evidencePath) story.evidence.browser.push(result.evidencePath);

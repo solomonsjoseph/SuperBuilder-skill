@@ -209,6 +209,50 @@ describe("validatePRD - cycle detection", () => {
   });
 });
 
+describe("validatePRD - deep chain no-cycle (positive)", () => {
+  const nocycle = HAS_CYCLE_FN ? it : it.todo;
+
+  nocycle("accepts deep chain A->B->C->D with no cycle", () => {
+    const errors = validatePRD(
+      makePRD({
+        userStories: [
+          makeStory({ id: "US-001", dependencies: [] }),
+          makeStory({ id: "US-002", dependencies: ["US-001"] }),
+          makeStory({ id: "US-003", dependencies: ["US-002"] }),
+          makeStory({ id: "US-004", dependencies: ["US-003"] }),
+        ],
+      }),
+    );
+    expect(errors.some((e) => e.toLowerCase().includes("cycle"))).toBe(false);
+  });
+});
+
+describe("validatePRD - prototype pollution safety", () => {
+  it("does not throw when story id is __proto__", () => {
+    // __proto__ fails the US-NNN id-format check and should return a validation
+    // error rather than crash or pollute Object.prototype.
+    const errors = validatePRD(makePRD({ userStories: [makeStory({ id: "__proto__" })] }));
+    expect(Array.isArray(errors)).toBe(true);
+    expect(errors.length).toBeGreaterThan(0);
+  });
+
+  it("does not throw when story id is constructor", () => {
+    const errors = validatePRD(makePRD({ userStories: [makeStory({ id: "constructor" })] }));
+    expect(Array.isArray(errors)).toBe(true);
+    expect(errors.length).toBeGreaterThan(0);
+  });
+
+  it("does not throw or pollute Object.prototype when qualityGates has __proto__ key", () => {
+    // JSON-parsed __proto__ keys do not pollute Object.prototype in V8/Node 12+,
+    // but we assert the production code handles it without throwing anyway.
+    const prd = makePRD({ qualityGates: { __proto__: "npm test" } });
+    const before = Object.getPrototypeOf({});
+    const errors = validatePRD(prd);
+    expect(Array.isArray(errors)).toBe(true);
+    expect(Object.getPrototypeOf({})).toBe(before);
+  });
+});
+
 describe("validatePRD - gate command shape", () => {
   const gate = HAS_GATE_VALIDATOR ? it : it.todo;
 

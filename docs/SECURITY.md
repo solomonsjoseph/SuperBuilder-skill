@@ -126,6 +126,33 @@ The orchestrator's gate runner does NOT use `bash -c`. PRD `qualityGates` comman
 - If a project's gate naturally needs a pipeline, wrap it in a script committed to the project (e.g., `./scripts/test.sh`) and reference the script directly: `qualityGates.test = "./scripts/test.sh"`. The script path is then a single argv-token and the project owns its content.
 - Adding a program to the allow-list requires editing `allow-list.ts` and is a deliberate trust decision.
 
+### Trust model for exec programs
+
+The allow-list is not a sandbox against the project itself. Several allowed programs — `npx`, `pnpx`, `bunx`, `dlx`, `node`, `make`, `cargo`, `deno` — can execute arbitrary code from the project's `package.json` scripts, `Makefile`, or local files. Adding any of these to a `qualityGates` command implicitly trusts the project's own tooling scripts. This is the intended model: Superbuilder trusts the project owner's code, not external, untrusted input.
+
+**High-risk programs.** `orchestrator/src/gates.ts` exports `HIGH_RISK_PROGRAMS` — a `Set` containing: `npx`, `pnpx`, `bunx`, `dlx`, `node`, `make`, `cargo`, `deno`. Before `runGate` will spawn any of these, the PRD's `humanApprovalRequiredFor` array must contain the string `"exec gate command"` (case-insensitive). If the opt-in is absent, `runGate` returns `status: "errored"` with reason:
+
+```
+high-risk gate program '<program>' requires humanApprovalRequiredFor: ["exec gate command"] in the PRD
+```
+
+To enable high-risk programs for a project, add to the PRD:
+
+```json
+"humanApprovalRequiredFor": ["exec gate command", ...]
+```
+
+**Audit log.** Before spawning any allowed program, `runGate` writes two header lines to the gate's `.log` file:
+
+```
+gate-audit: <program> <args>
+gate-command: <full command string>
+```
+
+This lets reviewers see exactly what ran during a story without replaying the run.
+
+**Removing high-risk programs.** If running `npx`/`node`/`make`/etc. is undesirable for a project, either remove them from the PRD's `qualityGates` or rely on project-level script wrappers (e.g., `./scripts/test.sh`) that are not themselves in `HIGH_RISK_PROGRAMS`.
+
 ## What we explicitly do NOT promise
 
 - No protection against an authenticated user *manually* typing dangerous commands outside Claude Code; the hooks only run when the agent invokes a tool.

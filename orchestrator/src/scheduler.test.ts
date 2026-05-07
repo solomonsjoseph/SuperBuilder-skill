@@ -1,6 +1,6 @@
-import { describe, it, expect, vi } from "vitest";
-import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
-import { existsSync } from "node:fs";
+import { describe, it, expect, vi, afterEach } from "vitest";
+import { mkdtemp, mkdir, readFile, writeFile, rm } from "node:fs/promises";
+import { existsSync, readdirSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -8,6 +8,36 @@ import { run } from "./scheduler.js";
 import * as prdModule from "./prd.js";
 import { loadPRD } from "./prd.js";
 import type { PRD, UserStory } from "./types.js";
+
+// Track and remove any sb-merge-* dirs created during tests.
+const createdMergeDirs: string[] = [];
+afterEach(async () => {
+  // Clean up any sb-merge-* dirs in /tmp that were created during the test.
+  const tmp = tmpdir();
+  try {
+    const entries = readdirSync(tmp);
+    for (const entry of entries) {
+      if (entry.startsWith("sb-merge-")) {
+        const full = join(tmp, entry);
+        try {
+          await rm(full, { recursive: true, force: true });
+        } catch {
+          // best-effort
+        }
+      }
+    }
+  } catch {
+    // best-effort
+  }
+  // Also clean explicitly tracked dirs.
+  for (const d of createdMergeDirs.splice(0)) {
+    try {
+      await rm(d, { recursive: true, force: true });
+    } catch {
+      // best-effort
+    }
+  }
+});
 
 function makeStory(overrides: Partial<UserStory> = {}): UserStory {
   return {
@@ -153,6 +183,51 @@ describe("scheduler policy integrity", () => {
     expect(mismatch.snapshot.deploymentAllowed).toBe(false);
     expect(mismatch.current.deploymentAllowed).toBe(true);
     expect(mismatch["fields-that-differ"]).toContain("deploymentAllowed");
+  }, 15000);
+
+  it("aborts when humanApprovalRequiredFor is mutated mid-run", async () => {
+    const prd = makePRD();
+    const root = await setupDryRunRoot(prd);
+    const store = await loadPRD(root);
+
+    let calls = 0;
+    const spy = vi.spyOn(prdModule, "loadPRD").mockImplementation(async (rootArg: string) => {
+      calls++;
+      if (calls === 2) {
+        const raw = await readFile(join(rootArg, "prd.json"), "utf8");
+        const parsed = JSON.parse(raw) as PRD;
+        // Remove an entry from humanApprovalRequiredFor to simulate privilege escalation.
+        parsed.humanApprovalRequiredFor = parsed.humanApprovalRequiredFor.filter(
+          (e) => e !== "production deploy",
+        );
+        await writeFile(join(rootArg, "prd.json"), JSON.stringify(parsed, null, 2) + "\n");
+      }
+      const raw = await readFile(join(rootArg, "prd.json"), "utf8");
+      const parsedPrd = JSON.parse(raw) as PRD;
+      return { prd: parsedPrd, path: join(rootArg, "prd.json") };
+    });
+
+    let caught: Error | null = null;
+    try {
+      await run(
+        { root, projectRoot: root, provider: "docker", dryRun: true },
+        store,
+      );
+    } catch (e) {
+      caught = e as Error;
+    } finally {
+      spy.mockRestore();
+    }
+
+    expect(caught).not.toBeNull();
+    expect(caught!.message).toMatch(/policy fields changed during run/);
+    expect(existsSync(join(root, "last-run-policy-mismatch.json"))).toBe(true);
+    const mismatch = JSON.parse(
+      await readFile(join(root, "last-run-policy-mismatch.json"), "utf8"),
+    ) as {
+      "fields-that-differ": string[];
+    };
+    expect(mismatch["fields-that-differ"]).toContain("humanApprovalRequiredFor");
   }, 15000);
 });
 
