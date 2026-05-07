@@ -166,7 +166,49 @@ describe("_runAudit rate-limit backoff", () => {
   });
 });
 
-describe("_runAudit large-diff truncation", () => {
+describe("_runAudit truncation breaks the page loop", () => {
+  it("stops fetching once threshold is crossed (5-page mock, only fetches up to truncation)", async () => {
+    const { lockPath, outDir } = await mkLockDir({ "octo/repo": { ref: "abc123" } });
+    const compareCalls: number[] = [];
+    const TOTAL_PAGES = 5;
+    const FILES_PER_PAGE = 100;
+    const { server, baseUrl } = await startServer((req, res) => {
+      res.setHeader("content-type", "application/json");
+      if (req.url === "/repos/octo/repo") return void res.end(JSON.stringify({ default_branch: "main" }));
+      if (req.url?.startsWith("/repos/octo/repo/commits/main")) return void res.end(JSON.stringify({ sha: "h" }));
+      if (req.url?.includes("/compare/")) {
+        const u = new URL(req.url, baseUrl);
+        const page = parseInt(u.searchParams.get("page") ?? "1", 10);
+        compareCalls.push(page);
+        const filesOnPage = Array.from({ length: FILES_PER_PAGE }, (_, i) => ({
+          filename: `src/p${page}-f${i}.ts`,
+          status: "modified",
+          additions: 1,
+          deletions: 1,
+          changes: 2,
+        }));
+        if (page < TOTAL_PAGES) {
+          res.setHeader(
+            "link",
+            `<${baseUrl}/repos/octo/repo/compare/abc123...h?per_page=100&page=${page + 1}>; rel="next"`,
+          );
+        }
+        return void res.end(JSON.stringify({ files: filesOnPage }));
+      }
+      res.statusCode = 404;
+      res.end("{}");
+    });
+    activeServer = server;
+
+    const results = await _runAudit({ sourceLockPath: lockPath, outputDir: outDir, apiBase: baseUrl });
+    expect(results[0]!.truncated).toBe(true);
+    // Truncation threshold is 250 files; 100/200 still under, after page 3 (300) we trip.
+    // We must NOT have walked all 5 pages.
+    expect(compareCalls).toEqual([1, 2, 3]);
+    // filesChanged reflects what we actually fetched (300), not the full 500.
+    expect(results[0]!.filesChanged).toBe(300);
+  });
+
   it("sets truncated=true when files exceed threshold", async () => {
     const { lockPath, outDir } = await mkLockDir({ "octo/repo": { ref: "abc" } });
     // Generate >250 files in one page so truncation kicks in.

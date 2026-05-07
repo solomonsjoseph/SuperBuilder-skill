@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { validatePRD } from "./validate.js";
+import { validatePRD, validateGateCommand } from "./validate.js";
 import { REQUIRED_APPROVAL_DEFAULTS } from "./types.js";
 
 // Detect whether the implementation has the new behaviors so we can pick
@@ -281,5 +281,37 @@ describe("validatePRD - gate command shape", () => {
   gate("accepts qualityGates.test = null", () => {
     const errors = validatePRD(makePRD());
     expect(errors.some((e) => e.toLowerCase().includes("qualitygates.test"))).toBe(false);
+  });
+});
+
+describe("validateGateCommand - flags allowed, shell metacharacters rejected", () => {
+  // Confirms the FORBIDDEN_TOKENS regex is shared with allow-list.ts/gates.ts
+  // and lets long/short flags through. Previously the inline regex here and
+  // the one in allow-list.ts disagreed; commands could pass validate and
+  // then fail at runShell with a confusing diagnostic.
+  it("accepts vitest run --reporter=verbose", () => {
+    expect(validateGateCommand("qualityGates.test", "vitest run --reporter=verbose")).toEqual([]);
+  });
+  it("accepts vitest run --coverage --reporter=html", () => {
+    expect(validateGateCommand("qualityGates.test", "vitest run --coverage --reporter=html")).toEqual([]);
+  });
+  it("accepts pytest -v -x", () => {
+    expect(validateGateCommand("qualityGates.test", "pytest -v -x")).toEqual([]);
+  });
+  it("rejects 'npm test ; rm -rf /' (semicolon)", () => {
+    const errs = validateGateCommand("qualityGates.test", "npm test ; rm -rf /");
+    expect(errs.some((e) => e.toLowerCase().includes("shell metacharacters"))).toBe(true);
+  });
+  it("rejects 'npm test && echo done' (logical AND)", () => {
+    const errs = validateGateCommand("qualityGates.test", "npm test && echo done");
+    expect(errs.some((e) => e.toLowerCase().includes("shell metacharacters"))).toBe(true);
+  });
+  it("rejects 'npm test | grep ok' (pipe)", () => {
+    const errs = validateGateCommand("qualityGates.test", "npm test | grep ok");
+    expect(errs.some((e) => e.toLowerCase().includes("shell metacharacters"))).toBe(true);
+  });
+  it("rejects 'cmd $(echo x)' (command substitution)", () => {
+    const errs = validateGateCommand("qualityGates.test", "cmd $(echo x)");
+    expect(errs.some((e) => e.toLowerCase().includes("shell metacharacters"))).toBe(true);
   });
 });

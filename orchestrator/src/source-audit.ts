@@ -183,6 +183,9 @@ async function auditOne(
   const latest = head.sha;
 
   // 3. Walk compare pages. per_page max is 100 per the docs.
+  // Stop fetching once we've crossed the truncation threshold — accumulating
+  // unused files just spends rate-limit budget. filesChanged then reflects
+  // what we actually fetched, with `truncated: true` signaling the cap.
   const files: CompareFile[] = [];
   let truncated = false;
   let url: string | null =
@@ -190,10 +193,10 @@ async function auditOne(
   while (url) {
     const page: { body: ComparePage; nextUrl: string | null } = await ghJsonPaged<ComparePage>(url, token, sleep);
     if (page.body.files?.length) files.push(...page.body.files);
-    // Stop accumulating per-file content once we cross the truncation threshold;
-    // we still loop pages so filesChanged is accurate, but per-file patches
-    // are ignored downstream (we never emit patches anyway).
-    if (shouldTruncate(files)) truncated = true;
+    if (shouldTruncate(files)) {
+      truncated = true;
+      break;
+    }
     url = page.nextUrl;
   }
 

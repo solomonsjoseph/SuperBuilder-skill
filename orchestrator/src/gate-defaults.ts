@@ -7,9 +7,10 @@
 //
 // All commands here MUST:
 //   1. start with a token in ALLOWED_PROGRAMS (see allow-list.ts)
-//   2. contain no shell metacharacters rejected by validateGateCommand:
-//      ;  |  <  >  `  &&  ||  $(  newline
-//   3. avoid the runtime FORBIDDEN_TOKENS pattern as well (--?\s | \n).
+//   2. contain no shell metacharacters rejected by FORBIDDEN_TOKENS in
+//      allow-list.ts (the single source of truth for both PRD-validate and
+//      runShell): ;  <  >  `  newline  |  ||  &&  $(
+//   3. flags like `--name`, `--name=value`, `-x`, `-xvf` are allowed.
 //
 // Command shapes were verified against upstream docs:
 //   - axe       <url>                              (npmjs.com/package/@axe-core/cli)

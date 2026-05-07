@@ -3,7 +3,7 @@
 
 import type { PRD, UserStory } from "./types.js";
 import { REQUIRED_APPROVAL_DEFAULTS } from "./types.js";
-import { ALLOWED_PROGRAMS } from "./allow-list.js";
+import { ALLOWED_PROGRAMS, FORBIDDEN_TOKENS } from "./allow-list.js";
 
 export function validatePRD(value: unknown): string[] {
   const errors: string[] = [];
@@ -80,8 +80,11 @@ export function validateGateCommand(name: string, value: unknown): string[] {
   if (typeof value !== "string") {
     return [`${name}: must be string or null`];
   }
-  // Mirror gates.ts: refuse any shell metacharacters at PRD-validate time.
-  if (/[;|<>`]|&&|\|\||\$\(|\n/.test(value)) {
+  // Mirror gates.ts exactly — single source of truth lives in allow-list.ts.
+  // Previously this used an inline regex that diverged from FORBIDDEN_TOKENS,
+  // which let strings pass validate but fail at runShell with a confusing
+  // diagnostic.
+  if (FORBIDDEN_TOKENS.test(value)) {
     return [`${name}: shell metacharacters not permitted in gate commands`];
   }
   const trimmed = value.trim();

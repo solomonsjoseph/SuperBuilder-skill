@@ -16,4 +16,10 @@ export const ALLOWED_PROGRAMS = new Set<string>([
   "make",
 ]);
 
-export const FORBIDDEN_TOKENS = /[;&|<>`$()]|--?\s|\\n/;
+// Matches shell metacharacters that would compose commands or substitute
+// values. Rejects: `;` `<` `>` backtick `\n` `|` (incl. `||`) `&&` `$(`.
+// Single `&` is allowed (some flags use it inside `=` values), single `(` /
+// `)` are allowed (only `$(` opens a subshell). Long flags like `--name`,
+// `--name=value`, and short flags like `-x`, `-xvf` are intentionally
+// allowed — gate commands routinely use them.
+export const FORBIDDEN_TOKENS = /[;<>`\n]|\|\|?|&&|\$\(/;
