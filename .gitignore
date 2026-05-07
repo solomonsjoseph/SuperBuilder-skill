@@ -14,3 +14,6 @@ orchestrator/*.tsbuildinfo
 # editor
 .vscode/
 .idea/
+
+orchestrator/coverage/
+.vitest/

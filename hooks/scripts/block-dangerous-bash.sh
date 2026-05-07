@@ -21,14 +21,47 @@ deny() {
   exit 0
 }
 
-# Catastrophic filesystem
-if [[ "$cmd" =~ rm[[:space:]]+(-[a-zA-Z]*r[a-zA-Z]*f|-[a-zA-Z]*f[a-zA-Z]*r)[[:space:]]+(/|\.|\$HOME|~)([[:space:]]|$) ]]; then
-  deny "rm -rf against root, home, or cwd is blocked by Superbuilder."
+# Indirection: block outright (must come before other checks)
+if [[ "$cmd" =~ (^|[[:space:]\;\&\|])e''val([[:space:]]|$) ]]; then
+  deny "e""val is blocked. Run the actual command directly."
+fi
+if [[ "$cmd" =~ (^|[[:space:]\;\&\|])(bash|sh|zsh|dash)[[:space:]]+-c([[:space:]]|$) ]]; then
+  deny "Shell-with-c indirection is blocked. Run the actual command directly."
+fi
+# Command substitution
+if [[ "$cmd" =~ \$\( ]]; then
+  deny "Command substitution \$(...) is blocked in tool input. Plan the command and run it directly."
+fi
+if [[ "$cmd" == *\`* ]]; then
+  deny "Backtick command substitution is blocked. Use direct invocation."
 fi
 
-# Force pushes
+# Catastrophic filesystem: rm with recursive+force in any flag combination
+if [[ "$cmd" =~ (^|[[:space:]\;\&\|])rm[[:space:]]+(-[a-zA-Z]*[rR][a-zA-Z]*[fF][a-zA-Z]*|-[a-zA-Z]*[fF][a-zA-Z]*[rR][a-zA-Z]*|--recursive|--force) ]]; then
+  deny "rm with recursive+force is blocked. Use a non-recursive form or remove specific files."
+fi
+# Also catch separated flags: rm -r ... -f / rm -f ... -r
+if [[ "$cmd" =~ (^|[[:space:]\;\&\|])rm[[:space:]] ]] && \
+   [[ "$cmd" =~ (^|[[:space:]])-[rR]([[:space:]]|$) ]] && \
+   [[ "$cmd" =~ (^|[[:space:]])-[fF]([[:space:]]|$) ]]; then
+  deny "rm with recursive+force is blocked. Use a non-recursive form or remove specific files."
+fi
+
+# Force pushes (all variants)
+if [[ "$cmd" =~ git[[:space:]]+push[[:space:]]+.*--force-with-lease ]]; then
+  deny "git push --force-with-lease is blocked. Open a PR or request explicit approval."
+fi
+if [[ "$cmd" =~ git[[:space:]]+push[[:space:]]+.*--force-if-includes ]]; then
+  deny "git push --force-if-includes is blocked. Open a PR or request explicit approval."
+fi
 if [[ "$cmd" =~ git[[:space:]]+push[[:space:]]+.*--force ]] || [[ "$cmd" =~ git[[:space:]]+push[[:space:]]+.*-f([[:space:]]|$) ]]; then
   deny "git push --force is blocked. Open a PR or request explicit approval."
+fi
+if [[ "$cmd" =~ git[[:space:]]+-c[[:space:]]+push\.force=true[[:space:]]+push ]]; then
+  deny "git -c push.force=true push is blocked. Open a PR or request explicit approval."
+fi
+if [[ "$cmd" =~ git[[:space:]]+push[[:space:]]+[^[:space:]]+[[:space:]]+\+ ]]; then
+  deny "git push with refspec-prefix force (+branch) is blocked. Open a PR or request explicit approval."
 fi
 if [[ "$cmd" =~ git[[:space:]]+push[[:space:]]+--mirror ]]; then
   deny "git push --mirror is blocked."
@@ -69,16 +102,42 @@ for pat in \
   'supabase[[:space:]]+db[[:space:]]+reset' \
   'dropdb' \
   'DROP[[:space:]]+DATABASE' \
-  'TRUNCATE[[:space:]]+TABLE'
+  'TRUNCATE[[:space:]]+TABLE' \
+  'cdk[[:space:]]+deploy' \
+  'pulumi[[:space:]]+up' \
+  'serverless[[:space:]]+deploy' \
+  'wrangler[[:space:]]+deploy' \
+  'helm[[:space:]]+upgrade' \
+  'helm[[:space:]]+install' \
+  'gcloud[[:space:]]+run[[:space:]]+deploy' \
+  'gcloud[[:space:]]+app[[:space:]]+deploy' \
+  'aws[[:space:]]+s3[[:space:]]+(cp|sync|mv).*(prod|production)' \
+  'flyctl[[:space:]]+deploy' \
+  'cap[[:space:]]+production[[:space:]]+deploy'
 do
   if [[ "$cmd" =~ $pat ]]; then
     deny "Release/destructive action ($pat) requires explicit human approval. Use /superbuilder:supership."
   fi
 done
 
-# Secret exfiltration
-if [[ "$cmd" =~ (cat|less|more|head|tail|bat)[[:space:]]+.*\.env(\b|$) ]]; then
-  deny "Reading .env files is blocked. Use environment variables, not file dumps."
+# Secret exfiltration: .env reads via many tools (allow intermediate flags/args)
+if [[ "$cmd" =~ (^|[[:space:]\;\&\|])(cat|less|more|head|tail|bat|xxd|od|strings|base64)([[:space:]]+[^[:space:]]+)*[[:space:]]+([^[:space:]]+/)*\.env(\b|$) ]]; then
+  deny "Reading .env files is blocked."
+fi
+if [[ "$cmd" =~ (grep|awk|sed)[[:space:]]+.+[[:space:]]+\.env(\b|$) ]]; then
+  deny "Reading .env files via grep/awk/sed is blocked."
+fi
+if [[ "$cmd" =~ (python|python3)[[:space:]]+-c.*\.env ]]; then
+  deny "Python -c reading .env files is blocked."
+fi
+if [[ "$cmd" =~ node[[:space:]]+-e.*\.env ]]; then
+  deny "Node -e reading .env files is blocked."
+fi
+if [[ "$cmd" =~ (curl|wget).*--upload-file.*\.env ]]; then
+  deny "Uploading .env via curl/wget is blocked."
+fi
+if [[ "$cmd" =~ nc[[:space:]]+.*\<.*\.env ]]; then
+  deny "Sending .env via nc is blocked."
 fi
 if [[ "$cmd" =~ git[[:space:]]+add[[:space:]]+.*\.env ]]; then
   deny "Committing .env files is blocked."

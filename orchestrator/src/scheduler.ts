@@ -1,5 +1,5 @@
 import { writeFile, mkdir, appendFile, readFile } from "node:fs/promises";
-import { existsSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 import type { PRD, UserStory } from "./types.js";
@@ -162,20 +162,34 @@ async function runOneStory(
     }
 
     const failures = gateResults.filter((r) => r.status === "failed");
+    const diffPath = join(evidenceDir, "diff.patch");
     if (failures.length === 0) {
-      // Capture commits and diff produced on the story branch.
+      // Path A: host-side capture. Works only when the orchestrator process is on
+      // the story branch (e.g. dryRun, or when Sandcastle's branch sync is verified).
       const integration = store.prd.integrationBranch;
       const commits = git(["log", "--format=%H", `${integration}..HEAD`], opts.projectRoot);
       if (commits) {
         story.evidence.commits.push(...commits.split("\n").filter(Boolean));
       }
-      const diffPath = join(evidenceDir, "diff.patch");
       const diff = git(["diff", `${integration}...HEAD`], opts.projectRoot);
       if (diff) {
         await writeFile(diffPath, diff, "utf8");
-        story.evidence.diffs.push(diffPath);
+        if (!story.evidence.diffs.includes(diffPath)) {
+          story.evidence.diffs.push(diffPath);
+        }
       }
-      if (evidenceComplete(story)) {
+      // Path B: sandbox/agent-emitted diff. If diff.patch already exists and is
+      // non-empty (the implementer prompt was instructed to write it), record it.
+      if (existsSync(diffPath)) {
+        try {
+          if (statSync(diffPath).size > 0 && !story.evidence.diffs.includes(diffPath)) {
+            story.evidence.diffs.push(diffPath);
+          }
+        } catch {
+          // ignore
+        }
+      }
+      if (evidenceComplete(story, evidenceDir) && failures.length === 0) {
         story.passes = true;
         story.lastFailure = null;
         await savePRD(store);
@@ -236,6 +250,8 @@ function implementPrompt(s: UserStory): string {
     ...s.filesLikelyTouched.map((f) => `- ${f}`),
     "",
     "Hard rules: no force push, no publish, no deploy, no .env writes, no dependency adds without approval, no Claude attribution in commits.",
+    "",
+    `Before declaring done, write your branch's diff to \`.superbuilder/evidence/${s.id}/diff.patch\` (e.g. \`git diff <integration>...HEAD > <path>\`) so evidence capture works even if the host process is not on this branch.`,
     "",
   ].join("\n");
 }

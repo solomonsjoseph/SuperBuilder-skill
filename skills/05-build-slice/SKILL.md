@@ -1,5 +1,5 @@
 ---
-name: superbuilder-build-slice
+name: 05-build-slice
 description: Use during sandboxed story execution to implement one user story. Works inside a Sandcastle sandbox on a per-story branch. Writes minimal code to satisfy acceptance criteria, runs the project's tests, and never touches main. Refuses to deploy, publish, or modify shared infra.
 ---
 

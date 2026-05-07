@@ -1,5 +1,5 @@
 ---
-name: superbuilder-ship-readiness
+name: 09-ship-readiness
 description: Use after all stories pass to assemble a release package — release notes, rollback plan, staged rollout, final gate sweep — without deploying. Powers /superbuilder:supership. Refuses to mark anything as deployed unless the user has explicitly approved.
 ---
 

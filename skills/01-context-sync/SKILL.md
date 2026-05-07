@@ -1,5 +1,5 @@
 ---
-name: superbuilder-context-sync
+name: 01-context-sync
 description: Use after intake-refine to build a project/domain map before any planning or coding. Detects package manager, reads existing docs and ADRs, captures domain language, and produces a context packet other agents will reuse. Required before write-prd or plan-stories.
 ---
 

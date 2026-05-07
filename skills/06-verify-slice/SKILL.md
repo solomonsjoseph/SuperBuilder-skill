@@ -1,5 +1,5 @@
 ---
-name: superbuilder-verify-slice
+name: 06-verify-slice
 description: Use after build-slice to prove the story works with evidence. Runs the full relevant gate set (tests, integration, browser, accessibility, performance, security scan). Captures logs and screenshots into .superbuilder/evidence/<US-id>/. Refuses to mark the story passable without artifacts on disk.
 ---
 

@@ -15,6 +15,17 @@ implementation is foundation rather than complete.
     not via the CLI verb. Wiring the CLI verbs is a follow-up.
   - The story merge step (story branch → `superbuilder/integration`) is described
     in `docs/ARCHITECTURE.md` but not yet implemented in `scheduler.ts`.
+  - **Evidence capture path.** The orchestrator captures commits/diffs in two
+    ways: (1) host-side `git log integration..HEAD` plus `git diff` from the
+    project root, which only works when the host process is actually on the
+    story branch — true for `dryRun`, but inside a real run the branch lives
+    inside Sandcastle and the host HEAD has not moved; (2) reading
+    `.superbuilder/evidence/<US>/diff.patch` from disk, which the implementer
+    prompt is now instructed to write before completing. Sandcastle's
+    branch-sync API needs to be verified against the pinned upstream commit in
+    `.superbuilder/source-lock.json` before option (1) can be relied on. The
+    deterministic Stop hook (`hooks/verify-stop.sh`) reads from disk, so as
+    long as `diff.patch` exists and is non-empty the loop completes correctly.
 
 - **Self-heal harness.** The protocol is documented (`skills/10-self-improve`,
   `agents/self-improvement-researcher`, `docs/EVALS.md`) but the `eval-task-set`

@@ -1,5 +1,5 @@
 ---
-name: superbuilder-triage-existing-work
+name: 04-triage-existing-work
 description: Use when the project has an existing backlog (issues, todos, half-finished branches) before starting autonomous work. Classifies each item as keep/replace/defer/drop and folds keepers into the PRD's user stories. Prevents Superbuilder from duplicating or contradicting in-flight work.
 ---
 

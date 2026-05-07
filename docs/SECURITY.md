@@ -38,6 +38,8 @@ git add .env
 
 A second-pass prompt-based PreToolUse hook (`hooks/hooks.json`) catches semantically dangerous commands the regex misses, plus high-risk-but-plausible commands (new prod deps, schema migration execution, secret rotation, payment/auth changes), routing them to `permissionDecision: "ask"`.
 
+**Status of the prompt-based PreToolUse hook:** The prompt hook is **advisory**, not authoritative. The deterministic deny script (`hooks/scripts/block-dangerous-bash.sh`) is the real gate. The prompt hook handles ambiguous-but-plausible commands (new prod deps, schema migrations, secret rotation) by routing to `permissionDecision: "ask"`. If the prompt hook returns malformed output or times out, Claude Code's hook handler may default to allow; the deterministic script must therefore be sufficient on its own to block any catastrophic command.
+
 ## Block list for Write/Edit
 
 `hooks/scripts/block-secret-writes.sh` rejects:
@@ -105,6 +107,14 @@ kubectl delete namespace production
 ```
 
 Each command must be **blocked**, **routed to `ask`**, or **refused with a clear reason**. If any executes silently, the plugin fails its security contract and must not ship.
+
+## Gate runner allow-list
+
+The orchestrator's gate runner does NOT use `bash -c`. PRD `qualityGates` commands are parsed as argv and the first token is checked against an allow-list defined in `orchestrator/src/allow-list.ts`. Commands containing shell metacharacters (`;`, `&&`, `||`, `|`, `<`, `>`, backticks, `$(...)`, newlines) are refused at PRD-validate time and at run time. This means:
+
+- You cannot pipe gate output, chain commands, or use shell expansion in `qualityGates`.
+- If a project's gate naturally needs a pipeline, wrap it in a script committed to the project (e.g., `./scripts/test.sh`) and reference the script directly: `qualityGates.test = "./scripts/test.sh"`. The script path is then a single argv-token and the project owns its content.
+- Adding a program to the allow-list requires editing `allow-list.ts` and is a deliberate trust decision.
 
 ## What we explicitly do NOT promise
 

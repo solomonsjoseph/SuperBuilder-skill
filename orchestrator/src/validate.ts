@@ -3,6 +3,7 @@
 
 import type { PRD, UserStory } from "./types.js";
 import { REQUIRED_APPROVAL_DEFAULTS } from "./types.js";
+import { ALLOWED_PROGRAMS } from "./allow-list.js";
 
 export function validatePRD(value: unknown): string[] {
   const errors: string[] = [];
@@ -37,6 +38,10 @@ export function validatePRD(value: unknown): string[] {
 
   if (!isObject(prd.qualityGates)) {
     errors.push("qualityGates must be an object (string commands or null per gate)");
+  } else {
+    for (const [gateName, gateValue] of Object.entries(prd.qualityGates)) {
+      errors.push(...validateGateCommand(`qualityGates.${gateName}`, gateValue));
+    }
   }
   if (!isObject(prd.sourceRefs)) {
     errors.push("sourceRefs must be an object pinning each upstream source");
@@ -63,8 +68,74 @@ export function validatePRD(value: unknown): string[] {
         }
       }
     }
+    // Detect dependency cycles between user stories.
+    errors.push(...detectDependencyCycles(prd.userStories as UserStory[]));
   }
 
+  return errors;
+}
+
+export function validateGateCommand(name: string, value: unknown): string[] {
+  if (value === null) return [];
+  if (typeof value !== "string") {
+    return [`${name}: must be string or null`];
+  }
+  // Mirror gates.ts: refuse any shell metacharacters at PRD-validate time.
+  if (/[;|<>`]|&&|\|\||\$\(|\n/.test(value)) {
+    return [`${name}: shell metacharacters not permitted in gate commands`];
+  }
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return [`${name}: shell metacharacters not permitted in gate commands`];
+  }
+  const first = trimmed.split(/\s+/)[0] ?? "";
+  if (!ALLOWED_PROGRAMS.has(first)) {
+    return [`${name}: program '${first}' not in allow-list. See docs/SECURITY.md`];
+  }
+  return [];
+}
+
+export function detectDependencyCycles(stories: UserStory[]): string[] {
+  const errors: string[] = [];
+  const graph = new Map<string, string[]>();
+  for (const s of stories) {
+    if (typeof s?.id !== "string") continue;
+    const deps = Array.isArray(s.dependencies) ? s.dependencies : [];
+    graph.set(s.id, deps);
+  }
+
+  // White = unvisited, Gray = in current DFS stack, Black = fully explored.
+  const WHITE = 0, GRAY = 1, BLACK = 2;
+  const color = new Map<string, number>();
+  for (const id of graph.keys()) color.set(id, WHITE);
+
+  const stack: string[] = [];
+
+  function dfs(node: string): void {
+    color.set(node, GRAY);
+    stack.push(node);
+    const deps = graph.get(node) ?? [];
+    for (const next of deps) {
+      if (!graph.has(next)) continue; // unknown-dep error already reported elsewhere
+      const c = color.get(next) ?? WHITE;
+      if (c === GRAY) {
+        // Back-edge: extract cycle slice from stack from `next` onwards.
+        const idx = stack.indexOf(next);
+        const cycle = stack.slice(idx).concat(next);
+        errors.push(`cycle detected: ${cycle.join(" -> ")}`);
+      } else if (c === WHITE) {
+        dfs(next);
+      }
+    }
+    stack.pop();
+    color.set(node, BLACK);
+  }
+
+  for (const id of graph.keys()) {
+    if ((color.get(id) ?? WHITE) === WHITE) {
+      dfs(id);
+    }
+  }
   return errors;
 }
 
@@ -74,8 +145,8 @@ function validateStory(value: unknown, tag: string): string[] {
     return [`${tag}: not an object`];
   }
   const s = value as Partial<UserStory>;
-  if (typeof s.id !== "string" || !/^US-\d{3,}$/.test(s.id)) {
-    errors.push(`${tag}.id must match /^US-\\d{3,}$/ (e.g. US-001)`);
+  if (typeof s.id !== "string" || !/^US-\d{3,6}$/.test(s.id)) {
+    errors.push(`${tag}.id must match /^US-\\d{3,6}$/ (e.g. US-001)`);
   }
   for (const f of ["title", "description"] as const) {
     if (typeof s[f] !== "string" || !s[f]) errors.push(`${tag}.${f} required`);

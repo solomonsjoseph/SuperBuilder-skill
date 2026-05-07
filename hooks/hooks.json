@@ -50,9 +50,9 @@
         "matcher": "*",
         "hooks": [
           {
-            "type": "prompt",
-            "prompt": "You are a completion gate for the Superbuilder plugin.\n\nIf the just-finished work claims a user story passed, verify the claim has evidence in .superbuilder/evidence/<US-id>/ (tests.log, security.log, review.md). If evidence is missing, return decision='block' with reason 'evidence missing for US-XXX'.\n\nIf the work attempted a deploy, publish, or destructive operation without an explicit human approval marker in .superbuilder/approvals/, return decision='block' with reason 'unauthorized release action'.\n\nOtherwise return decision='approve'. Output ONLY: {\"decision\": \"approve|block\", \"reason\": \"<why>\"}",
-            "timeout": 30
+            "type": "command",
+            "command": "bash \"$CLAUDE_PLUGIN_ROOT/hooks/scripts/verify-stop.sh\"",
+            "timeout": 10
           }
         ]
       }

@@ -3,6 +3,7 @@ import { createWriteStream } from "node:fs";
 import { writeFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import type { QualityGates, UserStory } from "./types.js";
+import { ALLOWED_PROGRAMS, FORBIDDEN_TOKENS } from "./allow-list.js";
 
 export type GateName = keyof QualityGates;
 
@@ -60,17 +61,39 @@ export async function runGate(
   };
 }
 
+async function refuse(logPath: string, message: string): Promise<{ exitCode: number }> {
+  await writeFile(logPath, `${message}\n`);
+  return { exitCode: 1 };
+}
+
 function runShell(command: string, logPath: string): Promise<{ exitCode: number }> {
+  const trimmed = command.trim();
+  if (!trimmed || FORBIDDEN_TOKENS.test(trimmed)) {
+    return refuse(
+      logPath,
+      "Refusing to run gate command: shell metacharacters present (allow-list violation)",
+    );
+  }
+  const tokens = trimmed.split(/\s+/);
+  const program = tokens[0] ?? "";
+  const restArgs = tokens.slice(1);
+  if (!program || !ALLOWED_PROGRAMS.has(program)) {
+    return refuse(
+      logPath,
+      `Refusing to run gate command: program '${program}' not in allow-list (allow-list violation)`,
+    );
+  }
+
   return new Promise((resolve) => {
-    const child = spawn("bash", ["-c", command], { stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn(program, restArgs, { stdio: ["ignore", "pipe", "pipe"] as const });
     const stream = createWriteStream(logPath, { flags: "w" });
-    child.stdout.pipe(stream, { end: false });
-    child.stderr.pipe(stream, { end: false });
-    child.on("close", (code) => {
+    child.stdout?.pipe(stream, { end: false });
+    child.stderr?.pipe(stream, { end: false });
+    child.on("close", (code: number | null) => {
       stream.end();
       resolve({ exitCode: code ?? 1 });
     });
-    child.on("error", (err) => {
+    child.on("error", (err: Error) => {
       stream.write(`\n[orchestrator] failed to spawn: ${err.message}\n`);
       stream.end();
       resolve({ exitCode: 1 });

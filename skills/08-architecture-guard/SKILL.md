@@ -1,5 +1,5 @@
 ---
-name: superbuilder-architecture-guard
+name: 08-architecture-guard
 description: Use to detect ball-of-mud entropy and over-abstraction across stories — invoked after every Nth merge or whenever review-slice flags ADR-worthy decisions. Produces ADRs and concrete deepening proposals. Refuses to ship invented abstractions for hypothetical futures.
 ---
 

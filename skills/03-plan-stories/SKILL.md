@@ -1,5 +1,5 @@
 ---
-name: superbuilder-plan-stories
+name: 03-plan-stories
 description: Use after PRD approval to materialize .superbuilder/prd.json with vertical-slice user stories. Each story has acceptance criteria, files-likely-touched, dependencies, risk level, and an empty evidence object. Refuses to produce stories that aren't independently testable.
 ---
 

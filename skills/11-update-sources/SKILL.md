@@ -1,5 +1,5 @@
 ---
-name: superbuilder-update-sources
+name: 11-update-sources
 description: Use via /superbuilder:supersources to audit upstream source repos (agent-skills, mattpocock/skills, sandcastle, ralph, autoresearch) for changes since the pinned ref. Classifies impact, maps to bundled components, never silently absorbs behavior or security changes.
 ---
 

@@ -1,5 +1,5 @@
 ---
-name: superbuilder-intake-refine
+name: 00-intake-refine
 description: Use when a user dumps a rough software idea, asks Superbuilder to "build X", or invokes /superbuilder:superbuild. Grills the idea until success criteria, primary user, scope edges, and risks are explicit. Pushes back on vague, overbuilt, or unsafe proposals before any planning happens.
 ---
 

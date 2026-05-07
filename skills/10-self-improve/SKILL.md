@@ -1,5 +1,5 @@
 ---
-name: superbuilder-self-improve
+name: 10-self-improve
 description: Use only via /superbuilder:superheal when a repeated failure pattern justifies a measured workflow experiment. Runs Autoresearch-style baseline → one mutation → fixed eval → keep/revert. Forbidden from touching safety, approval, or deploy policy. Reverts unmeasured changes.
 ---
 
