@@ -15,7 +15,10 @@ const SRC_DIR = dirname(__filename);
 const ORCH_ROOT = resolve(SRC_DIR, "..");
 const DIST_INDEX = join(ORCH_ROOT, "dist", "index.js");
 
-function maliciousPRD(maliciousCmd: string): unknown {
+function maliciousPRD(
+  maliciousCmd: string,
+  extraApprovals: string[] = [],
+): unknown {
   return {
     schemaVersion: "superbuilder.prd.v2",
     project: "rce-test",
@@ -42,6 +45,7 @@ function maliciousPRD(maliciousCmd: string): unknown {
       "dependency additions",
       "security policy changes",
       "quality gate weakening",
+      ...extraApprovals,
     ],
     qualityGates: {
       typecheck: null,
@@ -185,4 +189,108 @@ describe("CLI verb: gates", () => {
     expect(result.status).toBe(64);
     expect(result.stderr).toMatch(/Usage:/);
   });
+
+  it(
+    "high-risk gate program (node) WITHOUT 'exec gate command' opt-in => errored",
+    async () => {
+      const tmp = await mkdtemp(join(tmpdir(), "sb-gates-hrno-"));
+      const sb = join(tmp, ".superbuilder");
+      await mkdir(sb, { recursive: true });
+      // 'node --version' uses a high-risk program; no opt-in in approvals,
+      // so the CLI must derive allowedHighRisk=false and refuse.
+      await writeFile(
+        join(sb, "prd.json"),
+        JSON.stringify(maliciousPRD("node --version"), null, 2),
+      );
+
+      const result = spawnSync(
+        process.execPath,
+        [DIST_INDEX, "gates", "US-001", "--root", sb, "--project", tmp],
+        { encoding: "utf8" },
+      );
+
+      expect(result.status).toBe(1);
+      const parsed = JSON.parse(result.stdout) as {
+        ok: boolean;
+        gates: Array<{ gate: string; status: string; reason: string | null }>;
+      };
+      expect(parsed.ok).toBe(false);
+      const testGate = parsed.gates.find((g) => g.gate === "test")!;
+      expect(testGate.status).toBe("errored");
+      expect(testGate.reason).toMatch(/high-risk/);
+      expect(testGate.reason).toMatch(/humanApprovalRequiredFor/);
+    },
+    20000,
+  );
+
+  it(
+    "high-risk gate program (node) WITH 'exec gate command' opt-in => passes",
+    async () => {
+      const tmp = await mkdtemp(join(tmpdir(), "sb-gates-hryes-"));
+      const sb = join(tmp, ".superbuilder");
+      await mkdir(sb, { recursive: true });
+      // Opt-in via humanApprovalRequiredFor; CLI must propagate
+      // allowedHighRisk=true to runGate so 'node --version' actually runs.
+      await writeFile(
+        join(sb, "prd.json"),
+        JSON.stringify(
+          maliciousPRD("node --version", ["exec gate command"]),
+          null,
+          2,
+        ),
+      );
+
+      const result = spawnSync(
+        process.execPath,
+        [DIST_INDEX, "gates", "US-001", "--root", sb, "--project", tmp],
+        { encoding: "utf8" },
+      );
+
+      // Story is low-risk, so only typecheck/lint/format/test/secretScan run
+      // and only `test` has a configured command — others are skipped, which
+      // does not fail the story. The single configured gate (test) should
+      // pass on this machine (node --version exits 0).
+      expect(result.status).toBe(0);
+      const parsed = JSON.parse(result.stdout) as {
+        ok: boolean;
+        gates: Array<{ gate: string; status: string; reason: string | null }>;
+      };
+      expect(parsed.ok).toBe(true);
+      const testGate = parsed.gates.find((g) => g.gate === "test")!;
+      expect(testGate.status).toBe("passed");
+      expect(testGate.reason).toBeNull();
+    },
+    20000,
+  );
+
+  it(
+    "case-insensitive opt-in: 'EXEC GATE COMMAND' is honored",
+    async () => {
+      const tmp = await mkdtemp(join(tmpdir(), "sb-gates-hrcase-"));
+      const sb = join(tmp, ".superbuilder");
+      await mkdir(sb, { recursive: true });
+      await writeFile(
+        join(sb, "prd.json"),
+        JSON.stringify(
+          maliciousPRD("node --version", ["EXEC GATE COMMAND"]),
+          null,
+          2,
+        ),
+      );
+
+      const result = spawnSync(
+        process.execPath,
+        [DIST_INDEX, "gates", "US-001", "--root", sb, "--project", tmp],
+        { encoding: "utf8" },
+      );
+
+      expect(result.status).toBe(0);
+      const parsed = JSON.parse(result.stdout) as {
+        gates: Array<{ gate: string; status: string }>;
+      };
+      const testGate = parsed.gates.find((g) => g.gate === "test")!;
+      expect(testGate.status).toBe("passed");
+    },
+    20000,
+  );
 });
