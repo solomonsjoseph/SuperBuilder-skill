@@ -1,5 +1,5 @@
 ---
-name: superbuilder-self-improve
+name: 10-self-improve
 description: Use only via /superbuilder:superheal when a repeated failure pattern justifies a measured workflow experiment. Runs Autoresearch-style baseline → one mutation → fixed eval → keep/revert. Forbidden from touching safety, approval, or deploy policy. Reverts unmeasured changes.
 ---
 
@@ -78,6 +78,26 @@ Plugin self-improve produces a PR against this plugin repo, never auto-merged.
 > Keep only if the target metric improved AND `regressionCount == 0` AND `safetyRegression == none` AND `falsePassRate == 0`.
 >
 > Revert if improvement is unmeasured, ambiguous, unsafe, or only cosmetically better.
+
+## Measurement (CLI verb)
+
+Numeric measurement does NOT happen in the agent's head — it goes through
+the orchestrator's `heal` verb:
+
+```bash
+# Set B (security harness — full implementation, runs every experiment):
+bin/superbuilder-heal --baseline-set B
+
+# Set A (single-story dryRun against examples/eval-fixture/; full 5-story
+# Set A tracked in #6):
+bin/superbuilder-heal --baseline-set A
+
+# With a mutation:
+bin/superbuilder-heal --mutation /path/to/EXP-XYZ.patch --baseline-set A
+```
+
+Reads `.superbuilder/experiments/EXP-NNN.json` to drive the keep/revert
+decision.
 
 ## Source basis
 

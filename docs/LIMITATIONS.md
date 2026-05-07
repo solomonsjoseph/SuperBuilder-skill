@@ -6,20 +6,32 @@ implementation is foundation rather than complete.
 ## Not yet wired (foundation; needs filling)
 
 - **Orchestrator integrations.**
-  - `orchestrator/src/sandcastle-runner.ts` imports `sandcastle` lazily and uses a
-    narrow API surface. The actual upstream API must be verified against the
-    pinned commit in `.superbuilder/source-lock.json` before relying on autonomous
-    runs. If the API has shifted, `createSandbox`/`run` calls need adjusting.
-  - `heal` and `sources` CLI verbs are stubbed in `orchestrator/src/index.ts`;
-    today they're invoked via the slash commands and the corresponding skills,
-    not via the CLI verb. Wiring the CLI verbs is a follow-up.
-  - The story merge step (story branch → `superbuilder/integration`) is described
-    in `docs/ARCHITECTURE.md` but not yet implemented in `scheduler.ts`.
+  - `orchestrator/src/sandcastle-runner.ts` is verified against
+    `@ai-hero/sandcastle` ^0.5.8 on 2026-05-07; see
+    `.superbuilder/source-lock.json`.
+  - `heal` is wired in `orchestrator/src/index.ts` and the
+    `bin/superbuilder-heal` shim builds-if-needed and dispatches to it.
+    `sources` was wired earlier; it remains live.
+  - **Evidence capture path.** The orchestrator captures commits and diffs in
+    two ways: (1) sandcastle's own `SandboxRunResult.commits[].sha` list,
+    surfaced through the adapter and recorded in `story.evidence.commits`
+    after each run; (2) reading `.superbuilder/evidence/<US>/diff.patch` from
+    disk, which the implementer prompt is instructed to write before
+    completing. Bind-mount providers (docker, podman) commit on a real host
+    git worktree so the story branch is visible to the host repo after
+    `sandbox.close()` — this is what enables the ff-only merge into
+    `superbuilder/integration`. The deterministic Stop hook
+    (`hooks/verify-stop.sh`) reads from disk, so as long as `diff.patch`
+    exists and is non-empty the loop completes correctly.
 
-- **Self-heal harness.** The protocol is documented (`skills/10-self-improve`,
-  `agents/self-improvement-researcher`, `docs/EVALS.md`) but the `eval-task-set`
-  fixture project that Set A/B/C reference does not exist in this repo. Build
-  it before claiming `/superbuilder:superheal` produces real measurements.
+- **Self-heal harness.** Set B (security regression harness) is now fully
+  implemented: `bin/superbuilder-heal --baseline-set B` exercises
+  `hooks/scripts/block-dangerous-bash.sh` against the docs/SECURITY.md
+  reverification list and writes
+  `.superbuilder/experiments/EXP-NNN.json`. Set A is a **single-story stub**
+  at `examples/eval-fixture/`; the full 5-story set described in
+  `docs/EVALS.md` is tracked under issue #6. Set C (diagnosis quality)
+  remains unimplemented.
 
 - **Source-update auditor.** The agent and the audit shape are defined
   (`skills/11-update-sources`, `agents/source-update-auditor`); the GitHub

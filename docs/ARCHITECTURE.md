@@ -193,12 +193,40 @@ Iteration caps (defaults; user-overridable):
 | `bin/*` | Shell dispatchers around the orchestrator |
 | `orchestrator/` | Story scheduler, gate runner, Sandcastle adapter, validator |
 
+## Quality gates: `failed` vs `errored`
+
+The gate runner (`orchestrator/src/gates.ts`) distinguishes two kinds of non-success outcomes so operators know whether to fix code or fix configuration:
+
+- **`failed`** — the gate program was spawned successfully and exited non-zero. This is a real test/lint/typecheck failure: the implementation under test does not meet the criterion. The scheduler records `gate failed: <name> (exit <n>)` in `lastFailure`, the operator should look at code.
+- **`errored`** — the gate could not even run as configured. Causes: shell-meta refusal, allow-list refusal, `spawn ENOENT` (program not on PATH), or the per-gate timeout (default 5 minutes). The scheduler records `gate misconfigured: <name> (<reason>)` in `lastFailure`, the operator should fix `qualityGates` in `prd.json` or the host environment, not application code.
+
+Errored outcomes still count toward `attemptsPerStory` — a misconfigured gate is not a free pass — but the failure note guides remediation toward configuration rather than implementation. Both `failed` and `errored` block the story from passing; `passed` and `skipped` (no command configured) do not.
+
 ## Branch policy
 
 - `targetBranch` — the user's existing branch; **never `main`** unless the user explicitly chooses it.
 - `integrationBranch` — `superbuilder/integration`; accumulates passing stories.
 - `superbuilder/<US-id>-<slug>` — one branch per story; merges to integration only after review approval.
 - Autonomous code never writes to `main` or the target production branch.
+
+### Story branch lifecycle
+
+1. The orchestrator hands the branch name `superbuilder/<US-id>-<slug>` to
+   sandcastle's `createSandbox`. With bind-mount providers (`docker`,
+   `podman`) sandcastle creates a real git worktree on the host repo and
+   runs the agent inside it. Commits land on the host worktree, on this
+   branch.
+2. After review approves and gates pass, the scheduler ff-only-merges the
+   story branch into `superbuilder/integration` from the host repo:
+   `git checkout superbuilder/integration && git merge --ff-only <story>`.
+   If integration does not yet exist, it is created lazily from
+   `targetBranch`.
+3. On non-fast-forward (a real conflict), the merge is aborted, the prior
+   branch is restored, `merge-conflict.md` is written under
+   `.superbuilder/evidence/<US>/`, and the story stays open with
+   `lastFailure = "merge conflict with integration"` for human resolution.
+   The loop does not exit on conflict — the story is retried up to its
+   attempts cap.
 
 ## Approval gates (orchestrator-level)
 

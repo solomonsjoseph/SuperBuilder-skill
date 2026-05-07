@@ -1,5 +1,5 @@
 ---
-name: superbuilder-write-prd
+name: 02-write-prd
 description: Use after context-sync to produce a PRD that is implementation-grade — every section answers "what gets built, what doesn't, how do we know it's done." Reads .superbuilder/intake.md and .superbuilder/context/*. Hands a finished PRD to plan-stories. Refuses to skip sections.
 ---
 

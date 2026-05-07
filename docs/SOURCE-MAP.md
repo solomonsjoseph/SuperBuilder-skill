@@ -48,12 +48,14 @@ The bootstrap `.superbuilder/source-lock.json` pins each source. Run
         "agents/architect.md"
       ]
     },
-    "mattpocock/sandcastle": {
-      "ref": "TBD-on-first-supersources-run",
-      "lastChecked": null,
+    "ai-hero/sandcastle": {
+      "ref": "v0.5.8",
+      "lastChecked": "2026-05-07",
+      "package": "@ai-hero/sandcastle",
+      "repo": "github.com/mattpocock/sandcastle",
       "mappedComponents": [
         "orchestrator/src/sandcastle-runner.ts",
-        "orchestrator/src/scheduler.ts"
+        "orchestrator/package.json"
       ]
     },
     "snarktank/ralph": {
@@ -93,10 +95,19 @@ The bootstrap `.superbuilder/source-lock.json` pins each source. Run
 **Adapted:** the relentless-interview discipline is folded into `00-intake-refine` and the `product-griller` agent.
 **Rejected:** caveman, write-a-skill, migrate-to-shoehorn, scaffold-exercises — optional, not core.
 
-### mattpocock/sandcastle
+### ai-hero/sandcastle (repo: mattpocock/sandcastle, package: @ai-hero/sandcastle)
 **Kept:** `createSandbox()` for multi-pass story execution.
 **Adapted:** branch policy (`superbuilder/<US-id>-<slug>`), provider policy (docker/podman/vercel), package-manager auto-detection.
 **Rejected:** `noSandbox()` for autonomous execution.
+
+**Verified API surface (pinned `@ai-hero/sandcastle` ^0.5.8, 2026-05-07):**
+- Top-level exports: `run`, `createSandbox`, `claudeCode`, `interactive`, `createWorktree`, plus agent providers `codex`/`opencode`/`pi`.
+- Provider subpath exports: `./sandboxes/docker` (`docker()`), `./sandboxes/podman` (`podman()`), `./sandboxes/vercel` (`vercel()`), `./sandboxes/daytona` (`daytona()`), `./sandboxes/no-sandbox`.
+- `createSandbox({ branch, sandbox, cwd?, hooks?, copyToWorktree?, timeouts? })` returns a `Sandbox` with `branch`, `worktreePath`, `run()`, `interactive()`, `close()`, `[Symbol.asyncDispose]`.
+- `Sandbox.run({ agent, prompt | promptFile, promptArgs?, maxIterations?, completionSignal?, idleTimeoutSeconds?, name?, logging?, signal? })` resolves to `{ iterations, completionSignal?, stdout, commits: { sha: string }[], logFilePath? }`.
+- Hook shape: `{ host?: { onWorktreeReady?, onSandboxReady? }, sandbox?: { onSandboxReady? } }`; each entry is `{ command: string, timeoutMs?, sudo? }`.
+- Branch behavior: bind-mount providers (docker/podman) create a real git worktree on the host repo. After `sandbox.close()` the branch persists and is mergeable from the host — this is how `scheduler.ts` ff-only-merges into `superbuilder/integration`.
+- Peer deps `@vercel/sandbox` and `@daytona/sdk` are optional; we dynamic-import the provider module so they aren't required when only docker/podman are used.
 
 ### snarktank/ralph
 **Kept:** PRD → user-stories → progress-log loop.

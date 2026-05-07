@@ -1,0 +1,81 @@
+{
+  "schemaVersion": "superbuilder.prd.v2",
+  "project": "eval-fixture",
+  "branchName": "superbuilder/eval-fixture",
+  "targetBranch": "main",
+  "integrationBranch": "superbuilder/integration",
+  "description": "Minimal single-story fixture used by the Superbuilder self-heal eval runner (Set A, downsized to one story). The full Set A (5 stories) is tracked in issue #6.",
+  "riskLevel": "low",
+  "deploymentAllowed": false,
+  "sourceRefs": {
+    "addyosmani/agent-skills": "fixture-not-applicable",
+    "mattpocock/skills": "fixture-not-applicable",
+    "mattpocock/sandcastle": "fixture-not-applicable",
+    "snarktank/ralph": "fixture-not-applicable",
+    "karpathy/autoresearch": "fixture-not-applicable"
+  },
+  "humanApprovalRequiredFor": [
+    "production deploy",
+    "destructive commands",
+    "secrets changes",
+    "billing changes",
+    "auth changes",
+    "database destructive migrations",
+    "dependency additions",
+    "security policy changes",
+    "quality gate weakening"
+  ],
+  "qualityGates": {
+    "typecheck": null,
+    "lint": null,
+    "format": null,
+    "test": null,
+    "integrationTest": null,
+    "security": null,
+    "secretScan": null,
+    "dependencyAudit": null,
+    "licenseCheck": null,
+    "browser": null,
+    "accessibility": null,
+    "performance": null
+  },
+  "userStories": [
+    {
+      "id": "US-001",
+      "title": "CLI prints version flag",
+      "description": "Running `node bin.js --version` prints the hardcoded version string and exits 0. The deterministic test in examples/eval-fixture/test.js verifies the contract.",
+      "acceptanceCriteria": [
+        "`node bin.js --version` exits with status 0",
+        "`node bin.js --version` prints the version string `1.0.0` followed by a newline to stdout",
+        "`node bin.js --version` writes nothing to stderr",
+        "The `-v` alias produces the same output as `--version`"
+      ],
+      "priority": 1,
+      "riskLevel": "low",
+      "filesLikelyTouched": [
+        "bin.js",
+        "test.js"
+      ],
+      "dependencies": [],
+      "passes": true,
+      "attempts": 1,
+      "lastFailure": null,
+      "evidence": {
+        "tests": [
+          "/Users/sj1136/Documents/VSCode_files/repos/Personal/SuperBuilder-skill/examples/eval-fixture/.superbuilder/evidence/US-001/test.log"
+        ],
+        "security": [
+          "/Users/sj1136/Documents/VSCode_files/repos/Personal/SuperBuilder-skill/examples/eval-fixture/.superbuilder/evidence/US-001/secretScan.log"
+        ],
+        "review": [],
+        "browser": [],
+        "accessibility": [],
+        "performance": [],
+        "commits": [],
+        "diffs": [
+          "/Users/sj1136/Documents/VSCode_files/repos/Personal/SuperBuilder-skill/examples/eval-fixture/.superbuilder/evidence/US-001/diff.patch"
+        ]
+      }
+    }
+  ]
+}

@@ -4,6 +4,19 @@ Self-improvement is only legitimate when it is measurable. This document
 defines the metrics, eval task sets, and keep/revert rules used by
 `10-self-improve` and the `self-improvement-researcher` agent.
 
+## Status
+
+- **Set B is fully implemented.** `bin/superbuilder-heal --baseline-set B`
+  pipes the docs/SECURITY.md reverification list through
+  `hooks/scripts/block-dangerous-bash.sh` and asserts every dangerous
+  command is denied. `securityBlockSuccess` must be 1.0 for an experiment
+  to be kept.
+- **Set A is a single-story stub** at `examples/eval-fixture/` (US-001 only,
+  "CLI prints version flag"). Expanding to the full 5 stories described
+  below is tracked under GitHub issue #6, which remains open after the
+  initial harness lands.
+- **Set C is not yet implemented.**
+
 ## Metrics
 
 | Metric | Definition | Direction |
@@ -21,6 +34,10 @@ defines the metrics, eval task sets, and keep/revert rules used by
 ## Standard eval task sets
 
 ### Set A — small story set (default for skill/prompt edits)
+
+Today the in-repo fixture (`examples/eval-fixture/`) contains only the first
+story below. The remaining four are described for spec; tracking issue #6
+covers expanding the fixture.
 
 Five tiny stories drawn from a fixture project:
 1. Add a CLI flag that prints version. (low risk, no UI)

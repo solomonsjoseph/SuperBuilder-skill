@@ -11,17 +11,21 @@
   "scripts": {
     "build": "tsc",
     "watch": "tsc --watch",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage"
   },
   "engines": {
     "node": ">=20"
   },
   "devDependencies": {
     "typescript": "^5.4.0",
-    "@types/node": "^20.11.0"
+    "@types/node": "^20.11.0",
+    "vitest": "^1.6.0",
+    "@vitest/coverage-v8": "^1.6.0"
   },
-  "dependencies": {},
-  "optionalDependencies": {
-    "sandcastle": "*"
+  "dependencies": {
+    "@ai-hero/sandcastle": "^0.5.8"
   }
 }

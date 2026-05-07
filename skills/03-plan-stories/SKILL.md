@@ -1,5 +1,5 @@
 ---
-name: superbuilder-plan-stories
+name: 03-plan-stories
 description: Use after PRD approval to materialize .superbuilder/prd.json with vertical-slice user stories. Each story has acceptance criteria, files-likely-touched, dependencies, risk level, and an empty evidence object. Refuses to produce stories that aren't independently testable.
 ---
 
@@ -62,4 +62,4 @@ Merges Addy `planning-and-task-breakdown`, Matt `to-issues`, Ralph `prd.json` sh
 
 ## Hand-off
 
-When `.superbuilder/prd.json` is valid (run the orchestrator's `validate.ts` — see bin/superbuilder-gates), invoke `AskUserQuestion` for explicit planning approval. Then the `/superbuilder:superbuild` flow proceeds to sandboxed execution.
+When `.superbuilder/prd.json` is valid (run `node orchestrator/dist/index.js validate` — implementation in `orchestrator/src/validate.ts`), invoke `AskUserQuestion` for explicit planning approval. Then the `/superbuilder:superbuild` flow proceeds to sandboxed execution. Per-story gate execution is handled by `bin/superbuilder-gates <US-id>`, which dispatches to the orchestrator's hardened `gates` verb (argv-form spawn through `runGate`'s allow-list). The agent never invokes `bash -c` against gate commands.

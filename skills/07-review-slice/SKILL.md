@@ -1,5 +1,5 @@
 ---
-name: superbuilder-review-slice
+name: 07-review-slice
 description: Use after verify-slice to fan out a parallel review (correctness, security, simplicity, test depth). On any blocker, dispatch the diagnose loop to root-cause and propose a fix. Only when all reviewers approve does the story become eligible for passes=true.
 ---
 

@@ -31,6 +31,27 @@ The mutation must NOT touch:
 
 Invoke `10-self-improve` skill which holds the full protocol. Hand the resulting EXP-NNN.json to `self-improvement-researcher` agent for synthesis.
 
+## CLI verb (deterministic measurement)
+
+The numeric measurement step runs through the orchestrator's `heal` verb,
+not by hand:
+
+```bash
+# Baseline-only run (no mutation): re-establish current numbers.
+bin/superbuilder-heal --baseline-set B
+bin/superbuilder-heal --baseline-set A   # uses examples/eval-fixture/
+
+# With a mutation (one change at a time):
+bin/superbuilder-heal --mutation /tmp/EXP-XYZ.patch --baseline-set A
+```
+
+The verb writes `.superbuilder/experiments/EXP-NNN.json` matching the shape
+in `docs/EVALS.md` and prints the same JSON to stdout. The agent reads the
+JSON and applies the keep/revert rule:
+
+> Keep iff `securityBlockSuccess == 1.0` AND `falsePassRate == 0` AND the
+> target metric improved (or held flat in baseline-only runs).
+
 ## Output
 
 Print a one-screen summary:

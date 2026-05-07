@@ -1,15 +1,16 @@
 import { writeFile, mkdir, appendFile, readFile } from "node:fs/promises";
-import { existsSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 import type { PRD, UserStory } from "./types.js";
 import { DEFAULT_CAPS } from "./types.js";
-import { selectNextStory, savePRD, evidenceComplete } from "./prd.js";
+import { selectNextStory, savePRD, evidenceComplete, loadPRD } from "./prd.js";
 import type { PRDStore } from "./prd.js";
 import { runGate, relevantGates } from "./gates.js";
 import type { GateResult } from "./gates.js";
 import { createSandbox } from "./sandcastle-runner.js";
 import type { Provider } from "./sandcastle-runner.js";
+import { policyHash, extractPolicy, policyDiff } from "./security.js";
 
 export interface RunOptions {
   root: string;          // .superbuilder dir
@@ -46,12 +47,50 @@ export async function run(opts: RunOptions, store: PRDStore): Promise<RunReport>
     );
   }
 
+  // Snapshot the PRD's security-relevant fields. Before each story we
+  // reload PRD from disk and re-hash; on mismatch we abort. Defense in
+  // depth against a subagent mutating .superbuilder/prd.json mid-run.
+  const policySnapshotHash = policyHash(store.prd);
+  const policySnapshot = extractPolicy(store.prd);
+
   let storiesRun = 0;
   while (true) {
     if (caps.fullRunStories !== null && storiesRun >= caps.fullRunStories) {
       report.notes.push(`Hit fullRunStories cap (${caps.fullRunStories}); stopping.`);
       break;
     }
+
+    // Re-verify policy integrity before picking the next story. We re-load
+    // the PRD from disk ONLY to detect tampering of policy fields. We do
+    // NOT replace store.prd — that would discard in-memory mutations made
+    // in prior iterations (attempts++, lastFailure, passes, evidence
+    // arrays). savePRD(store) at the end of each attempt persists the
+    // in-memory state to disk anyway, so the on-disk PRD that `fresh` reads
+    // already reflects the latest legitimate state.
+    const fresh = await loadPRD(opts.root);
+    const currentHash = policyHash(fresh.prd);
+    if (currentHash !== policySnapshotHash) {
+      const currentPolicy = extractPolicy(fresh.prd);
+      const fieldsThatDiffer = policyDiff(policySnapshot, currentPolicy);
+      await mkdir(opts.root, { recursive: true });
+      await writeFile(
+        join(opts.root, "last-run-policy-mismatch.json"),
+        JSON.stringify(
+          {
+            snapshot: policySnapshot,
+            current: currentPolicy,
+            "fields-that-differ": fieldsThatDiffer,
+          },
+          null,
+          2,
+        ) + "\n",
+      );
+      throw new Error(
+        "Superbuilder policy fields changed during run; aborting. See .superbuilder/last-run-policy-mismatch.json.",
+      );
+    }
+    // Discard `fresh`. store.prd remains the authoritative in-memory state.
+
     const story = selectNextStory(store.prd);
     if (!story) {
       report.notes.push("No eligible stories remaining. Done.");
@@ -92,6 +131,10 @@ async function runOneStory(
   while (story.attempts < caps.attemptsPerStory) {
     story.attempts++;
     const branch = `superbuilder/${story.id}-${slugify(story.title)}`;
+    // Commits produced by sandcastle during this attempt (host-visible after
+    // sandbox.close() with bind-mount providers). Used both for evidence and
+    // for the host-side ff merge below.
+    const sandboxCommits: string[] = [];
 
     if (!opts.dryRun) {
       // Place agents in a sandbox; one branch per story; multiple runs inside.
@@ -109,10 +152,10 @@ async function runOneStory(
 
         const impl = await sandbox.run({
           name: `implement-${story.id}`,
-          agent: "implementer",
           promptFile: join(promptDir, `${story.id}-implement.md`),
           maxIterations: 1,
         });
+        sandboxCommits.push(...impl.commits);
         if (!impl.ok) {
           story.lastFailure = `implement: ${impl.notes}`;
           await savePRD(store);
@@ -120,10 +163,10 @@ async function runOneStory(
         }
         const verify = await sandbox.run({
           name: `verify-${story.id}`,
-          agent: "test-engineer",
           promptFile: join(promptDir, `${story.id}-verify.md`),
           maxIterations: 1,
         });
+        sandboxCommits.push(...verify.commits);
         if (!verify.ok) {
           story.lastFailure = `verify: ${verify.notes}`;
           await savePRD(store);
@@ -131,10 +174,10 @@ async function runOneStory(
         }
         const review = await sandbox.run({
           name: `review-${story.id}`,
-          agent: "reviewer",
           promptFile: join(promptDir, `${story.id}-review.md`),
           maxIterations: 1,
         });
+        sandboxCommits.push(...review.commits);
         if (!review.ok) {
           story.lastFailure = `review: ${review.notes}`;
           await savePRD(store);
@@ -162,27 +205,79 @@ async function runOneStory(
     }
 
     const failures = gateResults.filter((r) => r.status === "failed");
-    if (failures.length === 0) {
-      // Capture commits and diff produced on the story branch.
-      const integration = store.prd.integrationBranch;
-      const commits = git(["log", "--format=%H", `${integration}..HEAD`], opts.projectRoot);
-      if (commits) {
-        story.evidence.commits.push(...commits.split("\n").filter(Boolean));
+    const erroredGates = gateResults.filter((r) => r.status === "errored");
+    const diffPath = join(evidenceDir, "diff.patch");
+    if (failures.length === 0 && erroredGates.length === 0) {
+      // Record any sandbox-reported commits up-front so they're durable even
+      // if the merge fails.
+      for (const sha of sandboxCommits) {
+        if (!story.evidence.commits.includes(sha)) story.evidence.commits.push(sha);
       }
-      const diffPath = join(evidenceDir, "diff.patch");
-      const diff = git(["diff", `${integration}...HEAD`], opts.projectRoot);
-      if (diff) {
-        await writeFile(diffPath, diff, "utf8");
+
+      // Merge the story branch into superbuilder/integration. Bind-mount
+      // sandcastle providers (docker, podman) commit on a real host worktree,
+      // so after sandbox.close() the branch exists in the host repo.
+      const merge = await mergeStoryIntoIntegration({
+        projectRoot: opts.projectRoot,
+        storyBranch: branch,
+        targetBranch: store.prd.targetBranch,
+        integrationBranch: store.prd.integrationBranch,
+        evidenceDir,
+        skip: opts.dryRun !== true ? false : !branchExists(opts.projectRoot, branch),
+      });
+      if (!merge.ok) {
+        story.lastFailure = merge.lastFailure;
+        await savePRD(store);
+        continue;
+      }
+      // Path B is the source of truth: if the agent (or sandbox) wrote a
+      // non-empty diff.patch, use it. The host process is rarely on the
+      // story branch (sandcastle docker provider commits on a worktree, not
+      // the host's main checkout), so a host-side `git diff` would clobber
+      // the real evidence with an empty file.
+      const agentDiffPresent =
+        existsSync(diffPath) && statSync(diffPath).size > 0;
+      if (!agentDiffPresent) {
+        // Path A fallback: only when Path B did not write anything.
+        const diff = git(
+          ["diff", `${store.prd.targetBranch}...${store.prd.integrationBranch}`],
+          opts.projectRoot,
+        );
+        if (diff) {
+          await writeFile(diffPath, diff, "utf8");
+        }
+        // If Path A also produced nothing, do not fabricate a placeholder —
+        // leave the story unable to pass; the Stop hook + evidenceComplete
+        // already enforce that real evidence is required.
+      }
+      if (
+        existsSync(diffPath) &&
+        statSync(diffPath).size > 0 &&
+        !story.evidence.diffs.includes(diffPath)
+      ) {
         story.evidence.diffs.push(diffPath);
       }
-      if (evidenceComplete(story)) {
+      if (evidenceComplete(story, evidenceDir) && failures.length === 0 && erroredGates.length === 0) {
         story.passes = true;
         story.lastFailure = null;
         await savePRD(store);
         return true;
       }
     }
-    story.lastFailure = failures.map((f) => `${f.gate} (exit ${f.exitCode})`).join("; ") || "evidence incomplete";
+    // Build distinct lastFailure strings: errored (misconfig) and failed
+    // (real test failure) get separate prefixes so operators know whether
+    // to fix configuration or fix code. Errored is surfaced first because
+    // a misconfigured gate blocks the operator's diagnostic.
+    const erroredParts = erroredGates.map(
+      (e) => `gate misconfigured: ${e.gate} (${e.reason ?? "unknown reason"})`,
+    );
+    const failedParts = failures.map(
+      (f) => `gate failed: ${f.gate} (exit ${f.exitCode})`,
+    );
+    const allParts = [...erroredParts, ...failedParts];
+    if (allParts.length > 0 || story.lastFailure === null) {
+      story.lastFailure = allParts.length > 0 ? allParts.join("; ") : "evidence incomplete";
+    }
     await savePRD(store);
   }
 
@@ -193,6 +288,125 @@ function git(args: string[], cwd: string): string {
   const r = spawnSync("git", args, { cwd, encoding: "utf8" });
   if (r.status === 0) return (r.stdout ?? "").trim();
   return "";
+}
+
+function gitFull(
+  args: string[],
+  cwd: string,
+): { status: number; stdout: string; stderr: string } {
+  const r = spawnSync("git", args, { cwd, encoding: "utf8" });
+  return {
+    status: typeof r.status === "number" ? r.status : -1,
+    stdout: r.stdout ?? "",
+    stderr: r.stderr ?? "",
+  };
+}
+
+function branchExists(projectRoot: string, branch: string): boolean {
+  const r = spawnSync(
+    "git",
+    ["rev-parse", "--verify", `refs/heads/${branch}`],
+    { cwd: projectRoot, encoding: "utf8" },
+  );
+  return r.status === 0;
+}
+
+function currentBranch(projectRoot: string): string {
+  const r = git(["rev-parse", "--abbrev-ref", "HEAD"], projectRoot);
+  return r || "HEAD";
+}
+
+interface MergeArgs {
+  projectRoot: string;
+  storyBranch: string;
+  targetBranch: string;
+  integrationBranch: string;
+  evidenceDir: string;
+  skip: boolean;
+}
+
+interface MergeOutcome {
+  ok: boolean;
+  lastFailure: string;
+}
+
+/**
+ * After a story passes review, merge its branch into integration with
+ * --ff-only. Creates integration lazily from targetBranch on first use.
+ *
+ * Skipped (returns ok=true) when `skip` is set — used in dryRun where the
+ * story branch was never created.
+ */
+async function mergeStoryIntoIntegration(args: MergeArgs): Promise<MergeOutcome> {
+  if (args.skip) {
+    return { ok: true, lastFailure: "" };
+  }
+  const { projectRoot, storyBranch, targetBranch, integrationBranch, evidenceDir } = args;
+
+  // Ensure story branch exists on the host. If not, the sandcastle run did
+  // not surface a host-visible worktree commit — surface as a soft failure
+  // rather than a true conflict.
+  if (!branchExists(projectRoot, storyBranch)) {
+    return {
+      ok: false,
+      lastFailure: `story branch ${storyBranch} not found in host repo after sandbox close`,
+    };
+  }
+
+  const prior = currentBranch(projectRoot);
+
+  // Lazily create integration branch from targetBranch.
+  if (!branchExists(projectRoot, integrationBranch)) {
+    const created = gitFull(
+      ["branch", integrationBranch, targetBranch],
+      projectRoot,
+    );
+    if (created.status !== 0) {
+      return {
+        ok: false,
+        lastFailure: `could not create ${integrationBranch} from ${targetBranch}: ${created.stderr.trim()}`,
+      };
+    }
+  }
+
+  // Checkout integration.
+  const co = gitFull(["checkout", integrationBranch], projectRoot);
+  if (co.status !== 0) {
+    return {
+      ok: false,
+      lastFailure: `git checkout ${integrationBranch} failed: ${co.stderr.trim()}`,
+    };
+  }
+
+  // ff-only merge.
+  const merge = gitFull(["merge", "--ff-only", storyBranch], projectRoot);
+  if (merge.status !== 0) {
+    // Best-effort cleanup: abort + return to prior branch.
+    gitFull(["merge", "--abort"], projectRoot);
+    gitFull(["checkout", prior], projectRoot);
+    const log = [
+      `# Merge conflict: ${storyBranch} -> ${integrationBranch}`,
+      "",
+      `Command: git merge --ff-only ${storyBranch}`,
+      `Exit code: ${merge.status}`,
+      "",
+      "Stderr:",
+      "```",
+      merge.stderr.trim() || "(no stderr)",
+      "```",
+      "",
+      "Stdout:",
+      "```",
+      merge.stdout.trim() || "(no stdout)",
+      "```",
+      "",
+    ].join("\n");
+    await mkdir(evidenceDir, { recursive: true });
+    await writeFile(join(evidenceDir, "merge-conflict.md"), log, "utf8");
+    return { ok: false, lastFailure: "merge conflict with integration" };
+  }
+
+  return { ok: true, lastFailure: "" };
 }
 
 function slugify(s: string): string {
@@ -236,6 +450,8 @@ function implementPrompt(s: UserStory): string {
     ...s.filesLikelyTouched.map((f) => `- ${f}`),
     "",
     "Hard rules: no force push, no publish, no deploy, no .env writes, no dependency adds without approval, no Claude attribution in commits.",
+    "",
+    `Before declaring done, write your branch's diff to \`.superbuilder/evidence/${s.id}/diff.patch\` (e.g. \`git diff <integration>...HEAD > <path>\`) so evidence capture works even if the host process is not on this branch.`,
     "",
   ].join("\n");
 }

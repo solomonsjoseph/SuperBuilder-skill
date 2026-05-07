@@ -1,5 +1,5 @@
 import { readFile, writeFile, mkdir } from "node:fs/promises";
-import { existsSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
 import { join, dirname } from "node:path";
 import type { PRD, UserStory } from "./types.js";
 import { validatePRD } from "./validate.js";
@@ -45,8 +45,25 @@ export function selectNextStory(prd: PRD): UserStory | null {
   return eligible[0]!;
 }
 
-export function evidenceComplete(story: UserStory): boolean {
+export function evidenceComplete(story: UserStory, evidenceDir: string): boolean {
   // A story may pass with empty evidence ONLY for a story whose acceptance criteria
   // are CI-side (e.g. "CI runs typecheck on PR open"). We still require commits + diffs.
-  return story.evidence.commits.length > 0 && story.evidence.diffs.length > 0;
+  // Path A (orchestrator-captured): host-side git produced both commits and diffs.
+  if (story.evidence.commits.length > 0 && story.evidence.diffs.length > 0) {
+    return true;
+  }
+  // Path B (sandbox-emitted): a non-empty diff.patch sitting in the evidence dir.
+  // This handles the case where the orchestrator process is not on the story branch
+  // (e.g. the branch only exists inside Sandcastle) but the implementer agent (or an
+  // external process) wrote the diff itself.
+  const diffPath = join(evidenceDir, "diff.patch");
+  if (existsSync(diffPath)) {
+    try {
+      const st = statSync(diffPath);
+      if (st.size > 0) return true;
+    } catch {
+      // fallthrough
+    }
+  }
+  return false;
 }
