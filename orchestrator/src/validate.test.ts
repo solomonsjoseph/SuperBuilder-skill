@@ -231,28 +231,25 @@ describe("validatePRD - prototype pollution safety", () => {
   it("does not throw when story id is __proto__", () => {
     // __proto__ fails the US-NNN id-format check and should return a validation
     // error rather than crash or pollute Object.prototype.
-    expect(() => {
-      const errors = validatePRD(
-        makePRD({
-          userStories: [makeStory({ id: "__proto__" })],
-        }),
-      );
-      // Must return errors (id format), not throw.
-      expect(Array.isArray(errors)).toBe(true);
-      expect(errors.length).toBeGreaterThan(0);
-    }).not.toThrow();
+    const errors = validatePRD(makePRD({ userStories: [makeStory({ id: "__proto__" })] }));
+    expect(Array.isArray(errors)).toBe(true);
+    expect(errors.length).toBeGreaterThan(0);
   });
 
   it("does not throw when story id is constructor", () => {
-    expect(() => {
-      const errors = validatePRD(
-        makePRD({
-          userStories: [makeStory({ id: "constructor" })],
-        }),
-      );
-      expect(Array.isArray(errors)).toBe(true);
-      expect(errors.length).toBeGreaterThan(0);
-    }).not.toThrow();
+    const errors = validatePRD(makePRD({ userStories: [makeStory({ id: "constructor" })] }));
+    expect(Array.isArray(errors)).toBe(true);
+    expect(errors.length).toBeGreaterThan(0);
+  });
+
+  it("does not throw or pollute Object.prototype when qualityGates has __proto__ key", () => {
+    // JSON-parsed __proto__ keys do not pollute Object.prototype in V8/Node 12+,
+    // but we assert the production code handles it without throwing anyway.
+    const prd = makePRD({ qualityGates: { __proto__: "npm test" } });
+    const before = Object.getPrototypeOf({});
+    const errors = validatePRD(prd);
+    expect(Array.isArray(errors)).toBe(true);
+    expect(Object.getPrototypeOf({})).toBe(before);
   });
 });
 

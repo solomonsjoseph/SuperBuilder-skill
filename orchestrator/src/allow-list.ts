@@ -14,6 +14,7 @@ export const ALLOWED_PROGRAMS = new Set<string>([
   "axe", "lighthouse", "pa11y", "trivy", "semgrep", "bandit",
   "shellcheck", "shfmt",
   "make",
+  "dlx",  // bun dlx — HIGH_RISK; must appear in ALLOWED_PROGRAMS to be reachable after opt-in
 ]);
 
 // Matches shell metacharacters that would compose commands or substitute

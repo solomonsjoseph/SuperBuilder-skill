@@ -118,11 +118,11 @@ describe("runGate", () => {
 
   // --- HIGH_RISK_PROGRAMS tests ---
 
-  it("HIGH_RISK_PROGRAMS contains expected entries", () => {
-    expect(HIGH_RISK_PROGRAMS.has("npx")).toBe(true);
-    expect(HIGH_RISK_PROGRAMS.has("node")).toBe(true);
-    expect(HIGH_RISK_PROGRAMS.has("make")).toBe(true);
-    expect(HIGH_RISK_PROGRAMS.has("deno")).toBe(true);
+  it("HIGH_RISK_PROGRAMS contains all expected entries", () => {
+    const expected = ["npx", "pnpx", "bunx", "dlx", "node", "bun", "tsx", "make", "cargo", "deno"];
+    for (const p of expected) {
+      expect(HIGH_RISK_PROGRAMS.has(p), `expected HIGH_RISK_PROGRAMS to contain '${p}'`).toBe(true);
+    }
   });
 
   it("high-risk program (node) without allowedHighRisk => errored with reason", async () => {
@@ -150,5 +150,14 @@ describe("runGate", () => {
     const log = await readFile(result.evidencePath, "utf8");
     expect(log).toMatch(/^gate-audit: npm --version/m);
     expect(log).toMatch(/^gate-command: npm --version/m);
+  });
+
+  it("audit lines appear in evidence log for a high-risk gate run with allowedHighRisk=true", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "gates-"));
+    const result = await runGate("test", "node --version", dir, { allowedHighRisk: true });
+    expect(result.status).toBe("passed");
+    const log = await readFile(result.evidencePath, "utf8");
+    expect(log).toMatch(/^gate-audit: node --version/m);
+    expect(log).toMatch(/^gate-command: node --version/m);
   });
 });

@@ -10,8 +10,14 @@ import { ALLOWED_PROGRAMS, FORBIDDEN_TOKENS } from "./allow-list.js";
  * explicit PRD opt-in via humanApprovalRequiredFor containing
  * "exec gate command" before runGate will spawn them.
  */
+// HIGH_RISK_PROGRAMS must be a subset of ALLOWED_PROGRAMS: every entry here
+// can only be reached after the opt-in check AND the ALLOWED_PROGRAMS check.
+// Keep in sync: bun/tsx can execute arbitrary local TS/JS (same risk as node);
+// dlx is the bun equivalent of npx.
 export const HIGH_RISK_PROGRAMS = new Set([
-  "npx", "pnpx", "bunx", "dlx", "node", "make", "cargo", "deno",
+  "npx", "pnpx", "bunx", "dlx",
+  "node", "bun", "tsx",
+  "make", "cargo", "deno",
 ]);
 
 export type GateName = keyof QualityGates;
@@ -85,8 +91,18 @@ export async function runGate(
     };
   }
 
-  // High-risk programs require explicit PRD opt-in.
+  // Reject shell metacharacters first — before extracting the program token —
+  // so a command like "node$(evil)" is caught here rather than silently
+  // passing the HIGH_RISK_PROGRAMS check (whose token split would yield
+  // "node$(evil)", which is NOT in the set).
   const trimmedCmd = command.trim();
+  if (!trimmedCmd || FORBIDDEN_TOKENS.test(trimmedCmd)) {
+    const reason = "Refusing to run gate command: shell metacharacters present (allow-list violation)";
+    await writeFile(evidencePath, `${reason}\n`);
+    return { gate, command, status: "errored", exitCode: null, durationMs: 0, evidencePath, reason };
+  }
+
+  // High-risk programs require explicit PRD opt-in.
   const tokens = trimmedCmd.split(/\s+/);
   const program = tokens[0] ?? "";
   if (HIGH_RISK_PROGRAMS.has(program) && options.allowedHighRisk !== true) {
@@ -155,9 +171,11 @@ async function runShell(command: string, logPath: string, timeoutMs: number): Pr
   // Write audit prelude before spawning so the log records exactly what ran.
   const auditLine = [
     `gate-audit: ${program} ${restArgs.join(" ")}`.trimEnd(),
-    `gate-command: ${command}`,
+    `gate-command: ${command.trim()}`,
     "",
   ].join("\n");
+  // Note: fs.writeFile accepts 'flag' (singular); createWriteStream accepts
+  // 'flags' (plural). Both spellings are correct per the Node.js API.
   await writeFile(logPath, auditLine, { flag: "w" });
 
   return new Promise((resolve) => {
