@@ -199,6 +199,95 @@ async function seedPRD(root: string, prd: PRD): Promise<void> {
   }
 }
 
+describe("scheduler diff.patch path B preservation", () => {
+  it("does not overwrite a non-empty diff.patch written before the run", async () => {
+    const { project, root } = await setupGitProjectAndPRDRoot();
+
+    // Pre-create the story branch with a real commit so the merge step
+    // executes (otherwise it's skipped in dryRun).
+    const storyBranch = "superbuilder/US-001-first";
+    gitOk(project, ["checkout", "-q", "-b", storyBranch]);
+    await writeFile(join(project, "story.txt"), "story content\n");
+    gitOk(project, ["add", "."]);
+    gitOk(project, ["commit", "-q", "-m", "story commit"]);
+    gitOk(project, ["checkout", "-q", "feature"]);
+
+    const prd = makePRD({ userStories: [makeStory({ id: "US-001", title: "first" })] });
+    await seedPRD(root, prd);
+
+    // Pre-write a Path B diff.patch with distinctive sentinel content
+    // BEFORE the scheduler runs. seedPRD wrote a placeholder; replace it.
+    const diffPath = join(root, "evidence", "US-001", "diff.patch");
+    const sentinel = "PATH-B-SENTINEL: agent-emitted diff content\n";
+    await writeFile(diffPath, sentinel, "utf8");
+
+    const store = await loadPRD(root);
+    const report = await run(
+      { root, projectRoot: project, provider: "docker", dryRun: true },
+      store,
+    );
+
+    expect(report.storiesPassed).toContain("US-001");
+
+    // Path A must NOT have overwritten Path B. Sentinel must survive.
+    const after = await readFile(diffPath, "utf8");
+    expect(after).toBe(sentinel);
+
+    // The story's evidence.diffs must include the Path B file.
+    const reloaded = JSON.parse(await readFile(join(root, "prd.json"), "utf8")) as PRD;
+    const us = reloaded.userStories.find((s) => s.id === "US-001")!;
+    expect(us.evidence.diffs).toContain(diffPath);
+  }, 15000);
+});
+
+describe("scheduler in-memory state preservation", () => {
+  it("preserves in-memory story.attempts across the per-iteration policy hash check", async () => {
+    // Use two stories so the loop iterates twice; the first story will fail
+    // (merge skipped because no branch exists), bumping attempts. Between
+    // iterations the scheduler re-loads the PRD for the policy hash check.
+    // The fix means store.prd is NOT replaced, so attempts mutated in
+    // memory must survive into the next iteration unchanged.
+    const root = await mkdtemp(join(tmpdir(), "sb-attempts-"));
+    const prd = makePRD();
+    // Force the first story to fail by NOT seeding diff.patch (so Path B
+    // empty, Path A also empty in dryRun without a real git project) AND
+    // by giving it 1 attempt cap.
+    await writeFile(join(root, "prd.json"), JSON.stringify(prd, null, 2) + "\n");
+    // Seed only US-002's evidence so US-001 has no diff (will fail).
+    const ev2 = join(root, "evidence", "US-002");
+    await mkdir(ev2, { recursive: true });
+    await writeFile(join(ev2, "diff.patch"), "fake diff for test\n");
+
+    const store = await loadPRD(root);
+    const report = await run(
+      {
+        root,
+        projectRoot: root,
+        provider: "docker",
+        dryRun: true,
+        caps: { attemptsPerStory: 1 },
+      },
+      store,
+    );
+
+    // US-001 failed (no evidence). The scheduler stops at first hard failure.
+    expect(report.storiesFailed).toContain("US-001");
+
+    // The on-disk PRD was written by savePRD at end of attempt. Reload and
+    // verify story.attempts reflects the failed iteration (>=1, not 0).
+    const reloaded = JSON.parse(await readFile(join(root, "prd.json"), "utf8")) as PRD;
+    const us1 = reloaded.userStories.find((s) => s.id === "US-001")!;
+    expect(us1.attempts).toBeGreaterThanOrEqual(1);
+
+    // And the in-memory store reflects the same — proving the hash check
+    // did not clobber it back to the disk-original 0 (which would only
+    // matter if attempts had diverged from disk; with savePRD it's the
+    // same value, but the key invariant is "store.prd is unchanged
+    // identity-wise across iterations").
+    expect(store.prd.userStories.find((s) => s.id === "US-001")!.attempts).toBeGreaterThanOrEqual(1);
+  }, 15000);
+});
+
 describe("scheduler story-branch merge", () => {
   it("happy path: ff-only merges the story branch into integration", async () => {
     const { project, root } = await setupGitProjectAndPRDRoot();

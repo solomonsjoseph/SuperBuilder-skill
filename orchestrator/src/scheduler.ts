@@ -60,11 +60,17 @@ export async function run(opts: RunOptions, store: PRDStore): Promise<RunReport>
       break;
     }
 
-    // Re-verify policy integrity before picking the next story.
-    const reloaded = await loadPRD(opts.root);
-    const currentHash = policyHash(reloaded.prd);
+    // Re-verify policy integrity before picking the next story. We re-load
+    // the PRD from disk ONLY to detect tampering of policy fields. We do
+    // NOT replace store.prd — that would discard in-memory mutations made
+    // in prior iterations (attempts++, lastFailure, passes, evidence
+    // arrays). savePRD(store) at the end of each attempt persists the
+    // in-memory state to disk anyway, so the on-disk PRD that `fresh` reads
+    // already reflects the latest legitimate state.
+    const fresh = await loadPRD(opts.root);
+    const currentHash = policyHash(fresh.prd);
     if (currentHash !== policySnapshotHash) {
-      const currentPolicy = extractPolicy(reloaded.prd);
+      const currentPolicy = extractPolicy(fresh.prd);
       const fieldsThatDiffer = policyDiff(policySnapshot, currentPolicy);
       await mkdir(opts.root, { recursive: true });
       await writeFile(
@@ -83,10 +89,7 @@ export async function run(opts: RunOptions, store: PRDStore): Promise<RunReport>
         "Superbuilder policy fields changed during run; aborting. See .superbuilder/last-run-policy-mismatch.json.",
       );
     }
-    // Replace the in-memory store with the disk truth so subsequent saves
-    // don't clobber legitimate non-policy edits made between iterations.
-    store.prd = reloaded.prd;
-    store.path = reloaded.path;
+    // Discard `fresh`. store.prd remains the authoritative in-memory state.
 
     const story = selectNextStory(store.prd);
     if (!story) {
@@ -227,27 +230,32 @@ async function runOneStory(
         await savePRD(store);
         continue;
       }
-      // Capture diff vs targetBranch from integration.
-      const diff = git(
-        ["diff", `${store.prd.targetBranch}...${store.prd.integrationBranch}`],
-        opts.projectRoot,
-      );
-      if (diff) {
-        await writeFile(diffPath, diff, "utf8");
-        if (!story.evidence.diffs.includes(diffPath)) {
-          story.evidence.diffs.push(diffPath);
+      // Path B is the source of truth: if the agent (or sandbox) wrote a
+      // non-empty diff.patch, use it. The host process is rarely on the
+      // story branch (sandcastle docker provider commits on a worktree, not
+      // the host's main checkout), so a host-side `git diff` would clobber
+      // the real evidence with an empty file.
+      const agentDiffPresent =
+        existsSync(diffPath) && statSync(diffPath).size > 0;
+      if (!agentDiffPresent) {
+        // Path A fallback: only when Path B did not write anything.
+        const diff = git(
+          ["diff", `${store.prd.targetBranch}...${store.prd.integrationBranch}`],
+          opts.projectRoot,
+        );
+        if (diff) {
+          await writeFile(diffPath, diff, "utf8");
         }
+        // If Path A also produced nothing, do not fabricate a placeholder —
+        // leave the story unable to pass; the Stop hook + evidenceComplete
+        // already enforce that real evidence is required.
       }
-      // Path B: sandbox/agent-emitted diff. If diff.patch already exists and is
-      // non-empty (the implementer prompt was instructed to write it), record it.
-      if (existsSync(diffPath)) {
-        try {
-          if (statSync(diffPath).size > 0 && !story.evidence.diffs.includes(diffPath)) {
-            story.evidence.diffs.push(diffPath);
-          }
-        } catch {
-          // ignore
-        }
+      if (
+        existsSync(diffPath) &&
+        statSync(diffPath).size > 0 &&
+        !story.evidence.diffs.includes(diffPath)
+      ) {
+        story.evidence.diffs.push(diffPath);
       }
       if (evidenceComplete(story, evidenceDir) && failures.length === 0 && erroredGates.length === 0) {
         story.passes = true;
