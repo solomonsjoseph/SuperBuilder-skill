@@ -66,13 +66,42 @@ if printf '%s' "$content" | grep -E -q 'Bearer[[:space:]]+[A-Za-z0-9._\-]{20,}';
   deny "File content contains a Bearer token."
 fi
 
-# Tamper-block hooks/.claude-plugin without approval
-case "$file_path" in
-  */hooks/hooks.json|*/hooks/scripts/*|*/.claude-plugin/plugin.json)
+# Tamper-block hooks/.claude-plugin without approval.
+#
+# Scope: ONLY files inside the Superbuilder plugin's own install dir
+# (${CLAUDE_PLUGIN_ROOT}). User projects with their own hooks/ dirs
+# (Husky, Lefthook, custom git hooks) or .claude-plugin/ are unaffected.
+#
+# Graceful fallback: if CLAUDE_PLUGIN_ROOT is unset we cannot resolve the
+# plugin install location deterministically, so we do not fire the
+# tamper-block (false-deny on every write would be worse). The deny lists
+# above for secrets/keys still apply.
+if [ -n "${CLAUDE_PLUGIN_ROOT:-}" ]; then
+  # Canonicalize when realpath is available; otherwise trust the absolute
+  # path the agent sends via Edit/Write.
+  if command -v realpath >/dev/null 2>&1; then
+    canon_file=$(realpath -m -- "$file_path" 2>/dev/null || printf '%s' "$file_path")
+    canon_root=$(realpath -m -- "$CLAUDE_PLUGIN_ROOT" 2>/dev/null || printf '%s' "$CLAUDE_PLUGIN_ROOT")
+  else
+    canon_file="$file_path"
+    canon_root="$CLAUDE_PLUGIN_ROOT"
+  fi
+  # Strip any trailing slash on the root to make prefix comparisons clean.
+  canon_root="${canon_root%/}"
+
+  in_scope=0
+  case "$canon_file" in
+    "$canon_root"/hooks/hooks.json) in_scope=1 ;;
+    "$canon_root"/hooks/scripts/*) in_scope=1 ;;
+    "$canon_root"/.claude-plugin/plugin.json) in_scope=1 ;;
+  esac
+
+  if [ "$in_scope" -eq 1 ]; then
     approval_dir="${CLAUDE_PROJECT_DIR:-$PWD}/.superbuilder/approvals"
     if ! ls "$approval_dir"/policy-change-*.md >/dev/null 2>&1; then
       deny "Modifying $file_path requires an approval marker at .superbuilder/approvals/policy-change-<sha>.md."
-    fi ;;
-esac
+    fi
+  fi
+fi
 
 exit 0

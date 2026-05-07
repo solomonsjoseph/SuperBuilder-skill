@@ -60,18 +60,75 @@ teardown() {
   [ -z "$output" ]
 }
 
-@test "denies: writing hooks/hooks.json without approval marker" {
+@test "denies: writing hooks/hooks.json without approval marker (plugin-root scoped)" {
+  export CLAUDE_PLUGIN_ROOT="$TMP_PROJECT"
   mkdir -p "$TMP_PROJECT/hooks"
   run run_with "$TMP_PROJECT/hooks/hooks.json" '{"hooks":{}}'
   [ "$status" -eq 0 ]
   [[ "$output" == *"deny"* ]]
 }
 
-@test "allows: writing hooks/hooks.json with approval marker present" {
+@test "allows: writing hooks/hooks.json with approval marker present (plugin-root scoped)" {
+  export CLAUDE_PLUGIN_ROOT="$TMP_PROJECT"
   mkdir -p "$TMP_PROJECT/hooks"
   mkdir -p "$TMP_PROJECT/.superbuilder/approvals"
   : > "$TMP_PROJECT/.superbuilder/approvals/policy-change-deadbeef.md"
   run run_with "$TMP_PROJECT/hooks/hooks.json" '{"hooks":{}}'
   [ "$status" -eq 0 ]
   [ -z "$output" ]
+}
+
+@test "denies: writing inside CLAUDE_PLUGIN_ROOT/hooks/scripts/ without approval marker" {
+  PLUGIN_ROOT=$(mktemp -d)
+  export CLAUDE_PLUGIN_ROOT="$PLUGIN_ROOT"
+  mkdir -p "$PLUGIN_ROOT/hooks/scripts"
+  run run_with "$PLUGIN_ROOT/hooks/scripts/foo.sh" '#!/bin/sh
+echo hi'
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"deny"* ]]
+  rm -rf "$PLUGIN_ROOT"
+}
+
+@test "denies: writing CLAUDE_PLUGIN_ROOT/hooks/hooks.json without approval marker" {
+  PLUGIN_ROOT=$(mktemp -d)
+  export CLAUDE_PLUGIN_ROOT="$PLUGIN_ROOT"
+  mkdir -p "$PLUGIN_ROOT/hooks"
+  run run_with "$PLUGIN_ROOT/hooks/hooks.json" '{"hooks":{}}'
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"deny"* ]]
+  rm -rf "$PLUGIN_ROOT"
+}
+
+@test "allows: writing user-project hooks/scripts/ outside CLAUDE_PLUGIN_ROOT" {
+  PLUGIN_ROOT=$(mktemp -d)
+  USER_PROJECT=$(mktemp -d)
+  export CLAUDE_PLUGIN_ROOT="$PLUGIN_ROOT"
+  mkdir -p "$USER_PROJECT/hooks/scripts"
+  run run_with "$USER_PROJECT/hooks/scripts/lint.sh" '#!/bin/sh
+echo lint'
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+  rm -rf "$PLUGIN_ROOT" "$USER_PROJECT"
+}
+
+@test "allows: writing user-project .claude-plugin/ outside CLAUDE_PLUGIN_ROOT" {
+  PLUGIN_ROOT=$(mktemp -d)
+  USER_PROJECT=$(mktemp -d)
+  export CLAUDE_PLUGIN_ROOT="$PLUGIN_ROOT"
+  mkdir -p "$USER_PROJECT/.claude-plugin"
+  run run_with "$USER_PROJECT/.claude-plugin/something.json" '{"x":1}'
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+  rm -rf "$PLUGIN_ROOT" "$USER_PROJECT"
+}
+
+@test "allows: CLAUDE_PLUGIN_ROOT unset, writing any /hooks/scripts/ falls through" {
+  unset CLAUDE_PLUGIN_ROOT
+  TARGET=$(mktemp -d)
+  mkdir -p "$TARGET/hooks/scripts"
+  run run_with "$TARGET/hooks/scripts/foo.sh" '#!/bin/sh
+echo ok'
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+  rm -rf "$TARGET"
 }
