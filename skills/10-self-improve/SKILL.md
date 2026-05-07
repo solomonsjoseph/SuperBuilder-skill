@@ -79,6 +79,26 @@ Plugin self-improve produces a PR against this plugin repo, never auto-merged.
 >
 > Revert if improvement is unmeasured, ambiguous, unsafe, or only cosmetically better.
 
+## Measurement (CLI verb)
+
+Numeric measurement does NOT happen in the agent's head — it goes through
+the orchestrator's `heal` verb:
+
+```bash
+# Set B (security harness — full implementation, runs every experiment):
+bin/superbuilder-heal --baseline-set B
+
+# Set A (single-story dryRun against examples/eval-fixture/; full 5-story
+# Set A tracked in #6):
+bin/superbuilder-heal --baseline-set A
+
+# With a mutation:
+bin/superbuilder-heal --mutation /path/to/EXP-XYZ.patch --baseline-set A
+```
+
+Reads `.superbuilder/experiments/EXP-NNN.json` to drive the keep/revert
+decision.
+
 ## Source basis
 
 Method adapted from Karpathy `autoresearch`. Do not import autoresearch as code.

@@ -1,18 +1,23 @@
 #!/usr/bin/env bash
-# Self-heal is invoked through Claude Code via /superbuilder:superheal,
-# which runs the 10-self-improve skill and dispatches the
-# self-improvement-researcher agent. This bin script exists as a stable
-# entry-point for future direct CLI use; today it prints guidance.
+# Run the Superbuilder self-heal evaluator. Builds (if needed) then dispatches
+# to the orchestrator's `heal` verb. Writes the experiment JSON to
+# .superbuilder/experiments/EXP-NNN.json (in the cwd by default) and prints it
+# to stdout.
+#
+# Usage:
+#   bin/superbuilder-heal --baseline-set <A|B> [--fixture-dir <path>] [--mutation <patch>]
+#   bin/superbuilder-heal                       # defaults to --baseline-set B
 set -euo pipefail
 
-cat >&2 <<'EOF'
-superbuilder-heal: self-healing runs through the Claude Code slash command.
+ROOT="${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+ORCH="$ROOT/orchestrator"
 
-  In a Claude Code session, run:
-      /superbuilder:superheal "<problem statement>"
+if [[ ! -d "$ORCH/dist" ]]; then
+  if [[ ! -d "$ORCH/node_modules" ]]; then
+    (cd "$ORCH" && (command -v pnpm >/dev/null 2>&1 && pnpm install --frozen-lockfile 2>/dev/null) \
+      || (command -v npm >/dev/null 2>&1 && npm install) ) >&2
+  fi
+  (cd "$ORCH" && npx tsc) >&2
+fi
 
-The command invokes the 10-self-improve skill which enforces the
-baseline → one mutation → fixed eval → keep/revert protocol.
-Direct CLI invocation is reserved; not yet implemented.
-EOF
-exit 0
+exec node "$ORCH/dist/index.js" heal "$@"

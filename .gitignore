@@ -6,6 +6,16 @@ orchestrator/*.tsbuildinfo
 # project-side state (this lives per-project, not in the plugin repo)
 .superbuilder/
 
+# Exception: the eval-fixture ships a checked-in PRD so /superbuilder:superheal
+# Set A is reproducible. Runtime artifacts (evidence/, progress.md, last-run.json,
+# experiments/) are NOT checked in.
+!examples/eval-fixture/.superbuilder/
+!examples/eval-fixture/.superbuilder/prd.json
+examples/eval-fixture/.superbuilder/evidence/
+examples/eval-fixture/.superbuilder/progress.md
+examples/eval-fixture/.superbuilder/last-run.json
+examples/eval-fixture/.superbuilder/experiments/
+
 # claude-mem / context-mode / IDE
 .claude/*.local.md
 .DS_Store
