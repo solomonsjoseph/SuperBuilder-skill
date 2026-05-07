@@ -2,11 +2,12 @@
 // Verbs: run | heal | sources | validate
 
 import { parseArgs } from "node:util";
-import { resolve } from "node:path";
+import { resolve, join } from "node:path";
 import { existsSync } from "node:fs";
 import { loadPRD } from "./prd.js";
 import { run as runScheduler } from "./scheduler.js";
 import type { Provider } from "./sandcastle-runner.js";
+import { runAudit } from "./source-audit.js";
 
 const HELP = `
 Usage: superbuilder-orchestrator <verb> [options]
@@ -71,12 +72,28 @@ async function main(argv: string[]): Promise<number> {
         return 1;
       }
     }
+    case "sources": {
+      const lockPath = join(root, "source-lock.json");
+      if (!existsSync(lockPath)) {
+        console.error(`Missing ${lockPath}. Run /superbuilder:supersources to bootstrap.`);
+        return 2;
+      }
+      const outputDir = join(root, "source-audits");
+      const results = await runAudit({ sourceLockPath: lockPath, outputDir });
+      const errored = results.filter((r) => r.error);
+      console.log(JSON.stringify({ ok: errored.length === 0, results }, null, 2));
+      if (errored.length > 0) {
+        console.error(
+          `Source audit completed with ${errored.length} error(s). Report still written to ${outputDir}/.`,
+        );
+        return 1;
+      }
+      return 0;
+    }
     case "heal":
-    case "sources":
-      // These flows live in their slash commands and skills today.
-      // Direct CLI invocation is reserved; the bin/ scripts print guidance.
+      // The heal flow still lives in its slash command and skill today.
       console.error(
-        `'${verb}' is exposed as the slash command /superbuilder:super${verb === "sources" ? "sources" : "heal"}. ` +
+        `'heal' is exposed as the slash command /superbuilder:superheal. ` +
           `The agent invokes the corresponding skill; this CLI verb is reserved for future automation.`,
       );
       return 64;

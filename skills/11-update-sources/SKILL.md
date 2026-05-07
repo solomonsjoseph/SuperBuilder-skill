@@ -22,18 +22,31 @@ Bundled prompts and skills can drift from upstream. Drift is a supply-chain risk
 
 ## Audit steps
 
-For each source:
+The data fetch runs through the orchestrator's `sources` CLI verb — it
+handles auth, pagination, rate-limit backoff, and large-diff truncation.
+The agent reads the resulting markdown report.
 
-1. Read the pinned ref from `source-lock.json`.
-2. Fetch the latest ref via the GitHub API (commits or releases page) using `WebFetch`.
-3. List changed files between the two refs (also via WebFetch on the GitHub compare page).
-4. For each changed file, classify into:
-   - **irrelevant** — docs, CI, tests for the source repo, anything not affecting bundled behavior.
-   - **capability** — new tool, new skill, new template that we may want to import.
-   - **behavior** — existing prompt/skill text changed. May change how Superbuilder reasons.
-   - **security** — defaults, allow-lists, block-lists changed.
-   - **breaking** — incompatible API change for Sandcastle, Ralph schema, etc.
-5. **Map to Superbuilder components**: which `skills/`, `agents/`, `commands/` files mention this source? Use `grep -l "<source-name>" skills agents commands docs`.
+1. Run the CLI verb to fetch + classify:
+
+   ```bash
+   bin/superbuilder-sources --root .superbuilder
+   ```
+
+   That dispatches to `orchestrator/src/source-audit.ts → runAudit`, which:
+   - reads `.superbuilder/source-lock.json`,
+   - fetches each source's default-branch HEAD via `/repos/:owner/:repo` then `/commits/:branch`,
+   - walks `/repos/:owner/:repo/compare/:base...:head?per_page=100&page=N` until `Link: rel="next"` is absent,
+   - honors `Retry-After` and `X-RateLimit-Reset` headers, exponential backoff on 403/429,
+   - flags `truncated: true` when files > 250 OR `additions+deletions > 10000`,
+   - writes `.superbuilder/source-audits/AUDIT-<UTC-timestamp>.md`.
+
+   Auth: `GH_TOKEN` then `GITHUB_TOKEN` then anonymous (warned, lower limit).
+
+2. Open the freshest `AUDIT-*.md`. For every source row:
+   - confirm `pinned`, `latest`, and the compare URL.
+   - if `truncated: true`, open the compare URL in a browser — the report is summary-only for large diffs.
+   - re-read the heuristic classification: security → breaking → irrelevant → capability → behavior → unknown.
+3. **Map to Superbuilder components**: which `skills/`, `agents/`, `commands/` files mention this source? Use `grep -l "<source-name>" skills agents commands docs`.
 
 ## Approval gates
 
