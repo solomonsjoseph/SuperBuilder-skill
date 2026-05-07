@@ -1,0 +1,27 @@
+{
+  "name": "@superbuilder/orchestrator",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Story scheduler, gate runner, Sandcastle adapter, and self-heal harness for the Superbuilder Claude Code plugin.",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "superbuilder-orchestrator": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "watch": "tsc --watch",
+    "lint": "tsc --noEmit"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.0",
+    "@types/node": "^20.11.0"
+  },
+  "dependencies": {},
+  "optionalDependencies": {
+    "sandcastle": "*"
+  }
+}

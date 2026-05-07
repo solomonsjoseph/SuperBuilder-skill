@@ -1,0 +1,20 @@
+{
+  "name": "superbuilder",
+  "version": "0.1.0",
+  "description": "Autonomous, security-default software-engineering operator. Turns a rough idea into a PRD, executes it as sandboxed user-stories with evidence-backed quality gates, and stops before production deploy.",
+  "author": {
+    "name": "Solomon S Joseph"
+  },
+  "homepage": "https://github.com/solomon-s-joseph/superbuilder",
+  "repository": "https://github.com/solomon-s-joseph/superbuilder",
+  "license": "MIT",
+  "keywords": [
+    "autonomous",
+    "agent",
+    "sdlc",
+    "sandcastle",
+    "prd",
+    "self-improvement",
+    "security"
+  ]
+}

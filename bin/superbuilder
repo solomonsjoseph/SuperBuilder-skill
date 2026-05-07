@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+# Superbuilder CLI dispatcher. Routes to the orchestrator or its sub-tools.
+set -euo pipefail
+
+ROOT="${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+
+usage() {
+  cat <<'EOF'
+Usage: superbuilder <command> [args]
+
+Commands:
+  run [--root .superbuilder]   Run the orchestrator over the configured PRD
+  heal <problem-statement>     Run a self-heal experiment
+  sources [check|update]       Audit or update upstream sources
+  gates <story-id>             Run quality gates for one story
+  status                       Print PRD/progress summary
+  --help                       Show this message
+EOF
+}
+
+cmd="${1:-}"
+shift || true
+
+case "$cmd" in
+  run)     exec "$ROOT/bin/superbuilder-run" "$@" ;;
+  heal)    exec "$ROOT/bin/superbuilder-heal" "$@" ;;
+  sources) exec "$ROOT/bin/superbuilder-sources" "$@" ;;
+  gates)   exec "$ROOT/bin/superbuilder-gates" "$@" ;;
+  status)
+    if [[ -f .superbuilder/prd.json ]]; then
+      jq -r '"Project: \(.project)  |  branch: \(.targetBranch) → \(.integrationBranch)\nStories:\n" + ([.userStories[] | "  \(if .passes then "✅" else "❌" end) \(.id) \(.title) (attempts=\(.attempts // 0))"] | join("\n"))' .superbuilder/prd.json
+    else
+      echo "No .superbuilder/prd.json found in $(pwd). Run /superbuilder:superbuild first." >&2
+      exit 1
+    fi
+    ;;
+  ""|--help|-h) usage ;;
+  *) echo "Unknown command: $cmd" >&2; usage; exit 2 ;;
+esac

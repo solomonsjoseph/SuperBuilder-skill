@@ -1,0 +1,85 @@
+{
+  "description": "Superbuilder safety hooks. Blocks destructive shell commands, secret commits, and unapproved deploy actions. Captures evidence after tool use. Loads .superbuilder/ context at session start.",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PLUGIN_ROOT/hooks/scripts/block-dangerous-bash.sh\"",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PLUGIN_ROOT/hooks/scripts/block-secret-writes.sh\"",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "prompt",
+            "prompt": "Tool input: $TOOL_INPUT\n\nYou are a security gate for the Superbuilder plugin. Inspect the proposed Bash command and return JSON.\n\nReturn permissionDecision='deny' with a clear reason if the command:\n- pushes to production, deploys, or publishes packages (vercel deploy --prod, railway up, fly deploy, npm/pnpm/yarn/bun publish)\n- destroys or rewrites shared state without approval (terraform destroy, kubectl delete namespace production, dropdb, supabase db reset, force pushes to main/master, git reset --hard on protected branches)\n- exfiltrates or commits secrets (cat .env, git add .env, base64-encoded credentials, hardcoded tokens)\n- weakens project safety (--no-verify, disabling tests, deleting hooks, chmod 777 on broad paths)\n- modifies CI/CD pipeline files in a way that disables gates\n\nReturn permissionDecision='ask' if the command is high-risk but plausibly intended (new production dependency, schema migration execution, secret rotation, payment/auth code change).\n\nReturn permissionDecision='allow' otherwise.\n\nOutput ONLY a JSON object: {\"hookSpecificOutput\": {\"permissionDecision\": \"allow|deny|ask\"}, \"systemMessage\": \"<reason>\"}",
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PLUGIN_ROOT/hooks/scripts/capture-evidence.sh\"",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "prompt",
+            "prompt": "You are a completion gate for the Superbuilder plugin.\n\nIf the just-finished work claims a user story passed, verify the claim has evidence in .superbuilder/evidence/<US-id>/ (tests.log, security.log, review.md). If evidence is missing, return decision='block' with reason 'evidence missing for US-XXX'.\n\nIf the work attempted a deploy, publish, or destructive operation without an explicit human approval marker in .superbuilder/approvals/, return decision='block' with reason 'unauthorized release action'.\n\nOtherwise return decision='approve'. Output ONLY: {\"decision\": \"approve|block\", \"reason\": \"<why>\"}",
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PLUGIN_ROOT/hooks/scripts/load-superbuilder-context.sh\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PLUGIN_ROOT/hooks/scripts/write-final-state.sh\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

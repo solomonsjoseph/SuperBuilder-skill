@@ -1,0 +1,16 @@
+# orchestrator build output
+orchestrator/dist/
+orchestrator/node_modules/
+orchestrator/*.tsbuildinfo
+
+# project-side state (this lives per-project, not in the plugin repo)
+.superbuilder/
+
+# claude-mem / context-mode / IDE
+.claude/*.local.md
+.DS_Store
+*.log
+
+# editor
+.vscode/
+.idea/

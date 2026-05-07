@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# Source audits run through the Claude Code slash command. This bin
+# script is a stable entry-point for future direct CLI use; today it
+# prints guidance.
+set -euo pipefail
+
+cat >&2 <<'EOF'
+superbuilder-sources: source-audit runs through the Claude Code slash command.
+
+  In a Claude Code session, run:
+      /superbuilder:supersources
+
+The command invokes the 11-update-sources skill which:
+  - reads .superbuilder/source-lock.json (creating one if missing)
+  - fetches upstream refs from the five pinned source repos
+  - classifies each diff (irrelevant / capability / behavior / security / breaking)
+  - writes .superbuilder/source-audits/AUDIT-<timestamp>.md
+  - never silently absorbs behavior or security changes.
+
+Direct CLI invocation is reserved; not yet implemented.
+EOF
+exit 0
