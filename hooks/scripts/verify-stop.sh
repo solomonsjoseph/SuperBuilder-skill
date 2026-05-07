@@ -52,7 +52,7 @@ fi
 # Pull every passes:true story as a compact JSON line. Tolerate missing
 # stories array, missing fields, nulls.
 stories_jsonl="$(jq -c '
-    (.stories // [])
+    (.userStories // [])
     | map(select((.passes // false) == true))
     | .[]
 ' "$prd_path" 2>/dev/null)"
@@ -70,7 +70,7 @@ while IFS= read -r story; do
     [[ -z "$story" ]] && continue
 
     us_id="$(printf '%s' "$story" | jq -r '.id // "<unknown>"')"
-    risk="$(printf '%s' "$story" | jq -r '.risk // "low"' | tr '[:upper:]' '[:lower:]')"
+    risk="$(printf '%s' "$story" | jq -r '.riskLevel // "low"' | tr '[:upper:]' '[:lower:]')"
 
     commits_len="$(printf '%s' "$story" | jq -r '(.evidence.commits // []) | length')"
     if [[ "$commits_len" -le 0 ]] 2>/dev/null; then
