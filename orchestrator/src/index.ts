@@ -178,9 +178,18 @@ async function main(argv: string[]): Promise<number> {
 
       const gateNames: GateName[] = relevantGates(story);
       const results: GateResult[] = [];
+      // Mirror scheduler.ts: derive allowedHighRisk from the PRD's
+      // humanApprovalRequiredFor opt-in. The CLI verb reads the PRD raw
+      // (no validate.ts), so guard against a missing/non-array field.
+      const allowedHighRisk = Array.isArray(prd.humanApprovalRequiredFor)
+        && prd.humanApprovalRequiredFor.some(
+          (entry) =>
+            typeof entry === "string"
+            && entry.toLowerCase() === "exec gate command",
+        );
       for (const g of gateNames) {
         const cmd = (prd.qualityGates?.[g] ?? null) as string | null;
-        const result = await runGate(g, cmd, evidenceDir);
+        const result = await runGate(g, cmd, evidenceDir, { allowedHighRisk });
         results.push(result);
       }
 
