@@ -132,3 +132,38 @@ echo ok'
   [ -z "$output" ]
   rm -rf "$TARGET"
 }
+
+# Regression tests for issue #17: GNU-only `realpath -m` silently disabled
+# the tamper-block on macOS / BSD when CLAUDE_PLUGIN_ROOT (or the target file)
+# was a symlink. Both scenarios below MUST deny.
+
+@test "tamper-block fires when CLAUDE_PLUGIN_ROOT is a symlink to the real plugin dir" {
+  REAL_ROOT=$(mktemp -d)
+  SYMLINK_ROOT=$(mktemp -u)
+  ln -s "$REAL_ROOT" "$SYMLINK_ROOT"
+  mkdir -p "$REAL_ROOT/hooks/scripts"
+  export CLAUDE_PLUGIN_ROOT="$SYMLINK_ROOT"
+  PROJECT=$(mktemp -d)
+  export CLAUDE_PROJECT_DIR="$PROJECT"
+  # writing to the REAL path (not the symlink) — must still be blocked
+  payload=$(printf '{"tool_name":"Write","tool_input":{"file_path":"%s/hooks/scripts/foo.sh","content":"#!/bin/sh"}}' "$REAL_ROOT")
+  run bash -c "echo '$payload' | bash $BATS_TEST_DIRNAME/../scripts/block-secret-writes.sh"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"deny"* ]]
+  rm -rf "$REAL_ROOT" "$PROJECT" "$SYMLINK_ROOT"
+}
+
+@test "tamper-block fires when target file_path is a symlink to inside the plugin root" {
+  PLUGIN_ROOT=$(mktemp -d)
+  USER_PROJ=$(mktemp -d)
+  mkdir -p "$PLUGIN_ROOT/hooks/scripts"
+  echo "real" > "$PLUGIN_ROOT/hooks/scripts/legit.sh"
+  ln -s "$PLUGIN_ROOT/hooks/scripts/legit.sh" "$USER_PROJ/innocent.sh"
+  export CLAUDE_PLUGIN_ROOT="$PLUGIN_ROOT"
+  export CLAUDE_PROJECT_DIR="$USER_PROJ"
+  payload=$(printf '{"tool_name":"Edit","tool_input":{"file_path":"%s/innocent.sh","new_string":"hi"}}' "$USER_PROJ")
+  run bash -c "echo '$payload' | bash $BATS_TEST_DIRNAME/../scripts/block-secret-writes.sh"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"deny"* ]]
+  rm -rf "$PLUGIN_ROOT" "$USER_PROJ"
+}

@@ -252,6 +252,11 @@ async function main(argv: string[]): Promise<number> {
       let resultBefore: EvalResult | null = null;
       let resultAfter: EvalResult;
       let mutationApplied = false;
+      // Issue #17 (#14 follow-up): when `git apply -R` fails, the worktree
+      // is left dirty. We force decision=revert + exit 2 + a loud DIRTY
+      // message regardless of metric outcome — an unreverted patch is worse
+      // than reporting a regression.
+      let revertFailed = false;
       try {
         if (mutationPath) {
           // 1. Pre-mutation measurement.
@@ -292,10 +297,11 @@ async function main(argv: string[]): Promise<number> {
             { cwd: process.cwd(), encoding: "utf8" },
           );
           if (revert.status !== 0) {
+            revertFailed = true;
             console.error(
-              `WARNING: failed to revert mutation ${mutationPath}:\n${revert.stderr ?? ""}`,
+              `!! HEAL: git apply -R failed; working tree is DIRTY. Manual cleanup required at ${process.cwd()}.\n${revert.stderr ?? ""}`,
             );
-            log.push(`${ts()} heal: WARNING mutation revert failed`);
+            log.push(`${ts()} heal: WARNING mutation revert failed (DIRTY worktree)`);
           } else {
             log.push(`${ts()} heal: mutation reverted`);
           }
@@ -309,14 +315,22 @@ async function main(argv: string[]): Promise<number> {
       const securityBlockSuccess =
         resultAfter.metrics.securityBlockSuccess ?? 1;
       const falsePassRate = resultAfter.metrics.falsePassRate;
-      const decision = decideKeepRevert({
+      const metricDecision = decideKeepRevert({
         scoreBefore,
         scoreAfter,
         securityBlockSuccess,
         falsePassRate,
       });
+      // Revert-failure escalation: force revert decision regardless of metrics.
+      const decision = revertFailed ? "revert" : metricDecision;
       const safetyOk = securityBlockSuccess >= 1.0;
       const regressionCount = scoreAfter < scoreBefore ? 1 : 0;
+      // Distinct machine-readable safetyRegression for the revert-failed case.
+      const safetyRegression = revertFailed
+        ? "revert-failed"
+        : safetyOk
+          ? "none"
+          : "set-B-block-success-below-1.0";
 
       // 4. Write EXP-NNN.json.
       mkdirSync(experimentsDir, { recursive: true });
@@ -339,7 +353,7 @@ async function main(argv: string[]): Promise<number> {
         scoreBefore,
         scoreAfter,
         regressionCount,
-        safetyRegression: safetyOk ? "none" : "set-B-block-success-below-1.0",
+        safetyRegression,
         decision,
         falsePassRate,
         resultBefore,
@@ -352,6 +366,9 @@ async function main(argv: string[]): Promise<number> {
 
       // Print the result JSON to stdout per the brief.
       console.log(JSON.stringify(experiment, null, 2));
+      // Exit 2 distinguishes the revert-failed case from a normal revert (1)
+      // or keep (0). Operators must see this distinct status.
+      if (revertFailed) return 2;
       return decision === "keep" ? 0 : 1;
     }
     default:
