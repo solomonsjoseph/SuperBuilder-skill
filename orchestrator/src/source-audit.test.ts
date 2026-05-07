@@ -166,6 +166,44 @@ describe("_runAudit rate-limit backoff", () => {
   });
 });
 
+describe("_runAudit auth header propagation", () => {
+  it("sends Authorization: Bearer <token> when GH_TOKEN is set in env", async () => {
+    const { lockPath, outDir } = await mkLockDir({ "octo/repo": { ref: "abc123" } });
+    const receivedHeaders: Record<string, string> = {};
+    const { server, baseUrl } = await startServer((req, res) => {
+      // Capture the Authorization header from the first compare request.
+      if (req.url?.includes("/compare/") && !receivedHeaders["authorization"]) {
+        receivedHeaders["authorization"] = req.headers["authorization"] ?? "";
+      }
+      res.setHeader("content-type", "application/json");
+      if (req.url === "/repos/octo/repo") return void res.end(JSON.stringify({ default_branch: "main" }));
+      if (req.url?.startsWith("/repos/octo/repo/commits/main")) return void res.end(JSON.stringify({ sha: "head456" }));
+      if (req.url?.includes("/compare/")) {
+        return void res.end(JSON.stringify({ files: [{ filename: "src/a.ts", status: "modified", additions: 1, deletions: 1, changes: 2 }] }));
+      }
+      res.statusCode = 404;
+      res.end("{}");
+    });
+    activeServer = server;
+
+    // _runAudit reads GH_TOKEN from process.env — set it for this test.
+    const origToken = process.env.GH_TOKEN;
+    process.env.GH_TOKEN = "test-token-xyz";
+    try {
+      await _runAudit({ sourceLockPath: lockPath, outputDir: outDir, apiBase: baseUrl });
+    } finally {
+      if (origToken === undefined) {
+        delete process.env.GH_TOKEN;
+      } else {
+        process.env.GH_TOKEN = origToken;
+      }
+    }
+
+    // The source code uses `Bearer ${token}` (not `token ${token}`).
+    expect(receivedHeaders["authorization"]).toBe("Bearer test-token-xyz");
+  });
+});
+
 describe("_runAudit truncation breaks the page loop", () => {
   it("stops fetching once threshold is crossed (5-page mock, only fetches up to truncation)", async () => {
     const { lockPath, outDir } = await mkLockDir({ "octo/repo": { ref: "abc123" } });

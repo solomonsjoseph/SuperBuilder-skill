@@ -299,6 +299,54 @@ describe("eval-runner: decideKeepRevert", () => {
   });
 });
 
+describe("heal verb: EXP-NNN.json has all required fields from EVALS.md shape", () => {
+  // The heal CLI (index.ts) writes the experiment log. We spawn it with
+  // --baseline-set B (no --mutation, baseline-only path) to exercise the
+  // writer without a real patch file.
+  it(
+    "EXP-001.json contains all required EVALS.md fields",
+    async () => {
+      const DIST_INDEX = join(PLUGIN_ROOT, "orchestrator", "dist", "index.js");
+      // If the dist is not built, skip gracefully.
+      if (!existsSync(DIST_INDEX)) {
+        return;
+      }
+      const tmpDir = await mkdtemp(join(tmpdir(), "sb-exp-fields-"));
+      const expDir = join(tmpDir, "experiments");
+      const { spawnSync: sp } = await import("node:child_process");
+      const result = sp(process.execPath, [DIST_INDEX, "heal", "--baseline-set", "B", "--experiments-dir", expDir], {
+        encoding: "utf8",
+        timeout: 60000,
+      });
+      // May exit 0 or 1 — both are valid non-error outcomes.
+      expect([0, 1]).toContain(result.status);
+      const expFile = join(expDir, "EXP-001.json");
+      expect(existsSync(expFile)).toBe(true);
+      const exp = JSON.parse(readFileSync(expFile, "utf8")) as Record<string, unknown>;
+      const requiredFields = [
+        "id",
+        "createdAt",
+        "problemStatement",
+        "targetMetric",
+        "baselineMetric",
+        "editableSurface",
+        "mutation",
+        "evalTaskSet",
+        "scoreBefore",
+        "scoreAfter",
+        "regressionCount",
+        "safetyRegression",
+        "decision",
+        "log",
+      ];
+      for (const field of requiredFields) {
+        expect(exp, `expected field "${field}" in EXP-001.json`).toHaveProperty(field);
+      }
+    },
+    90000,
+  );
+});
+
 describe("heal verb: mutation apply/revert leaves working tree clean", () => {
   // Mutation apply path goes through `git apply` in the orchestrator's cwd.
   // We verify revert restores the targeted file in a tiny isolated git repo.

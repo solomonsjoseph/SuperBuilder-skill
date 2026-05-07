@@ -209,6 +209,53 @@ describe("validatePRD - cycle detection", () => {
   });
 });
 
+describe("validatePRD - deep chain no-cycle (positive)", () => {
+  const nocycle = HAS_CYCLE_FN ? it : it.todo;
+
+  nocycle("accepts deep chain A->B->C->D with no cycle", () => {
+    const errors = validatePRD(
+      makePRD({
+        userStories: [
+          makeStory({ id: "US-001", dependencies: [] }),
+          makeStory({ id: "US-002", dependencies: ["US-001"] }),
+          makeStory({ id: "US-003", dependencies: ["US-002"] }),
+          makeStory({ id: "US-004", dependencies: ["US-003"] }),
+        ],
+      }),
+    );
+    expect(errors.some((e) => e.toLowerCase().includes("cycle"))).toBe(false);
+  });
+});
+
+describe("validatePRD - prototype pollution safety", () => {
+  it("does not throw when story id is __proto__", () => {
+    // __proto__ fails the US-NNN id-format check and should return a validation
+    // error rather than crash or pollute Object.prototype.
+    expect(() => {
+      const errors = validatePRD(
+        makePRD({
+          userStories: [makeStory({ id: "__proto__" })],
+        }),
+      );
+      // Must return errors (id format), not throw.
+      expect(Array.isArray(errors)).toBe(true);
+      expect(errors.length).toBeGreaterThan(0);
+    }).not.toThrow();
+  });
+
+  it("does not throw when story id is constructor", () => {
+    expect(() => {
+      const errors = validatePRD(
+        makePRD({
+          userStories: [makeStory({ id: "constructor" })],
+        }),
+      );
+      expect(Array.isArray(errors)).toBe(true);
+      expect(errors.length).toBeGreaterThan(0);
+    }).not.toThrow();
+  });
+});
+
 describe("validatePRD - gate command shape", () => {
   const gate = HAS_GATE_VALIDATOR ? it : it.todo;
 

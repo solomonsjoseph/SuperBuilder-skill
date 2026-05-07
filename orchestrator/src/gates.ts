@@ -5,6 +5,15 @@ import { join } from "node:path";
 import type { QualityGates, UserStory } from "./types.js";
 import { ALLOWED_PROGRAMS, FORBIDDEN_TOKENS } from "./allow-list.js";
 
+/**
+ * Programs that can execute arbitrary project code and therefore require
+ * explicit PRD opt-in via humanApprovalRequiredFor containing
+ * "exec gate command" before runGate will spawn them.
+ */
+export const HIGH_RISK_PROGRAMS = new Set([
+  "npx", "pnpx", "bunx", "dlx", "node", "make", "cargo", "deno",
+]);
+
 export type GateName = keyof QualityGates;
 
 // Default per-gate wall-clock timeout. Five minutes is generous for typical
@@ -55,7 +64,7 @@ export async function runGate(
   gate: GateName,
   command: string | null,
   evidenceDir: string,
-  options: { timeoutMs?: number } = {},
+  options: { timeoutMs?: number; allowedHighRisk?: boolean } = {},
 ): Promise<GateResult> {
   await mkdir(evidenceDir, { recursive: true });
   const evidencePath = join(evidenceDir, `${gate}.log`);
@@ -73,6 +82,24 @@ export async function runGate(
       durationMs: 0,
       evidencePath,
       reason: null,
+    };
+  }
+
+  // High-risk programs require explicit PRD opt-in.
+  const trimmedCmd = command.trim();
+  const tokens = trimmedCmd.split(/\s+/);
+  const program = tokens[0] ?? "";
+  if (HIGH_RISK_PROGRAMS.has(program) && options.allowedHighRisk !== true) {
+    const reason = `high-risk gate program '${program}' requires humanApprovalRequiredFor: ["exec gate command"] in the PRD`;
+    await writeFile(evidencePath, `${reason}\n`);
+    return {
+      gate,
+      command,
+      status: "errored",
+      exitCode: null,
+      durationMs: 0,
+      evidencePath,
+      reason,
     };
   }
 
@@ -107,7 +134,7 @@ async function refuse(logPath: string, message: string): Promise<ShellOutcome> {
   return { kind: "errored", reason: message };
 }
 
-function runShell(command: string, logPath: string, timeoutMs: number): Promise<ShellOutcome> {
+async function runShell(command: string, logPath: string, timeoutMs: number): Promise<ShellOutcome> {
   const trimmed = command.trim();
   if (!trimmed || FORBIDDEN_TOKENS.test(trimmed)) {
     return refuse(
@@ -125,9 +152,18 @@ function runShell(command: string, logPath: string, timeoutMs: number): Promise<
     );
   }
 
+  // Write audit prelude before spawning so the log records exactly what ran.
+  const auditLine = [
+    `gate-audit: ${program} ${restArgs.join(" ")}`.trimEnd(),
+    `gate-command: ${command}`,
+    "",
+  ].join("\n");
+  await writeFile(logPath, auditLine, { flag: "w" });
+
   return new Promise((resolve) => {
     const child = spawn(program, restArgs, { stdio: ["ignore", "pipe", "pipe"] as const });
-    const stream = createWriteStream(logPath, { flags: "w" });
+    // Open in append mode so the audit prelude written above is preserved.
+    const stream = createWriteStream(logPath, { flags: "a" });
     child.stdout?.pipe(stream, { end: false });
     child.stderr?.pipe(stream, { end: false });
 

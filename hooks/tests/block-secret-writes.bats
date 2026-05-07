@@ -32,6 +32,45 @@ teardown() {
   [[ "$output" == *"deny"* ]]
 }
 
+@test "denies: GitHub modern PAT (ghu_ user token)" {
+  run run_with "$TMP_PROJECT/notes.txt" "token: ghu_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"deny"* ]]
+}
+
+@test "denies: OpenAI API key (sk- alphanumeric)" {
+  run run_with "$TMP_PROJECT/config.json" '{"key":"sk-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}'
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"deny"* ]]
+}
+
+@test "denies: Stripe live key (sk_live_)" {
+  # Split the literal so source-scanning tools don't flag this test file as
+  # containing an actual secret. The runtime value is the canonical pattern.
+  local key; key="sk_live""_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+  run run_with "$TMP_PROJECT/stripe.js" "const key = \"${key}\";"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"deny"* ]]
+}
+
+@test "denies: Google API key (AIzaSy)" {
+  run run_with "$TMP_PROJECT/api.js" 'const apiKey = "AIzaSyAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";'
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"deny"* ]]
+}
+
+@test "denies: Slack bot token (xoxb-)" {
+  run run_with "$TMP_PROJECT/slack.js" 'const token = "xoxb-111-222-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";'
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"deny"* ]]
+}
+
+@test "denies: Authorization Bearer token (long)" {
+  run run_with "$TMP_PROJECT/http.js" 'headers["Authorization"] = "Bearer MY_SECRET_TOKEN_HERE_ABCDEFGHIJKLMNOP";'
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"deny"* ]]
+}
+
 @test "allows: writing .env.example" {
   run run_with "$TMP_PROJECT/.env.example" "FOO="
   [ "$status" -eq 0 ]
@@ -48,7 +87,10 @@ teardown() {
 }
 
 @test "denies: AKIA AWS access key id" {
-  run run_with "$TMP_PROJECT/note.txt" "AKIAABCDEFGHIJKLMNOP"
+  # Split the literal across two strings so push-protection scanners don't
+  # treat this test file as containing a real AWS key. Runtime value is valid.
+  local key; key="AKIA""ABCDEFGHIJKLMNOP"
+  run run_with "$TMP_PROJECT/note.txt" "${key}"
   [ "$status" -eq 0 ]
   [[ "$output" == *"deny"* ]]
 }

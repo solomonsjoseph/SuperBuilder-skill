@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { relevantGates, runGate } from "./gates.js";
+import { relevantGates, runGate, HIGH_RISK_PROGRAMS } from "./gates.js";
 import type { UserStory } from "./types.js";
 
 function makeStory(overrides: Partial<UserStory> = {}): UserStory {
@@ -60,9 +60,9 @@ describe("runGate", () => {
     expect(st.isFile()).toBe(true);
   });
 
-  it("'node --version' is in allow-list and passes", async () => {
+  it("'node --version' is in allow-list and passes (allowedHighRisk=true)", async () => {
     const dir = await mkdtemp(join(tmpdir(), "gates-"));
-    const result = await runGate("test", "node --version", dir);
+    const result = await runGate("test", "node --version", dir, { allowedHighRisk: true });
     expect(result.status).toBe("passed");
     expect(result.exitCode).toBe(0);
   });
@@ -100,7 +100,7 @@ describe("runGate", () => {
     // refused at the shell-meta check (parens are forbidden tokens).
     const scriptPath = join(dir, "exit1.js");
     await writeFile(scriptPath, "process.exit(1);\n");
-    const result = await runGate("test", `node ${scriptPath}`, dir);
+    const result = await runGate("test", `node ${scriptPath}`, dir, { allowedHighRisk: true });
     expect(result.status).toBe("failed");
     expect(result.exitCode).toBe(1);
     expect(result.reason).toBeNull();
@@ -111,8 +111,44 @@ describe("runGate", () => {
     // node script that sleeps forever (no parens, allowed program).
     const scriptPath = join(dir, "forever.js");
     await writeFile(scriptPath, "setInterval(function(){}, 1000);\n");
-    const result = await runGate("test", `node ${scriptPath}`, dir, { timeoutMs: 200 });
+    const result = await runGate("test", `node ${scriptPath}`, dir, { timeoutMs: 200, allowedHighRisk: true });
     expect(result.status).toBe("errored");
     expect(result.reason).toMatch(/timed out/);
+  });
+
+  // --- HIGH_RISK_PROGRAMS tests ---
+
+  it("HIGH_RISK_PROGRAMS contains expected entries", () => {
+    expect(HIGH_RISK_PROGRAMS.has("npx")).toBe(true);
+    expect(HIGH_RISK_PROGRAMS.has("node")).toBe(true);
+    expect(HIGH_RISK_PROGRAMS.has("make")).toBe(true);
+    expect(HIGH_RISK_PROGRAMS.has("deno")).toBe(true);
+  });
+
+  it("high-risk program (node) without allowedHighRisk => errored with reason", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "gates-"));
+    const result = await runGate("test", "node --version", dir);
+    expect(result.status).toBe("errored");
+    expect(result.reason).toMatch(/high-risk/);
+    expect(result.reason).toMatch(/humanApprovalRequiredFor/);
+    const log = await readFile(result.evidencePath, "utf8");
+    expect(log).toMatch(/high-risk/);
+  });
+
+  it("high-risk program (node) with allowedHighRisk=true => proceeds normally", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "gates-"));
+    const result = await runGate("test", "node --version", dir, { allowedHighRisk: true });
+    expect(result.status).toBe("passed");
+    expect(result.exitCode).toBe(0);
+  });
+
+  it("audit lines appear in evidence log for a non-high-risk gate run", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "gates-"));
+    // 'npm' is in the allow-list and not in HIGH_RISK_PROGRAMS.
+    const result = await runGate("test", "npm --version", dir);
+    expect(result.status).toBe("passed");
+    const log = await readFile(result.evidencePath, "utf8");
+    expect(log).toMatch(/^gate-audit: npm --version/m);
+    expect(log).toMatch(/^gate-command: npm --version/m);
   });
 });
