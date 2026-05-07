@@ -5,13 +5,15 @@
 
 import { describe, it, expect } from "vitest";
 import { mkdtemp, mkdir, writeFile, copyFile, readFile } from "node:fs/promises";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   blockScriptPath,
   computeFalsePassRate,
+  decideKeepRevert,
   defaultFixtureDir,
   runEval,
   runSecurityHarness,
@@ -222,4 +224,137 @@ describe("eval-runner: falsePassRate", () => {
     const fpr = await computeFalsePassRate(dir);
     expect(fpr).toBe(0);
   });
+});
+
+describe("eval-runner: in-tree fixture purity (issue #14)", () => {
+  // Set A used to call ensureFixtureSeed against the in-tree fixture, dirtying
+  // examples/eval-fixture/.superbuilder/prd.json on every run. The fix: copy
+  // to tmp and operate on the copy. Verify the in-tree file is byte-identical
+  // before and after a Set A run.
+  it(
+    "runEval(taskSet=A) leaves examples/eval-fixture/.superbuilder/prd.json byte-identical",
+    async () => {
+      const inTreePrd = join(FIXTURE_DIR, ".superbuilder", "prd.json");
+      const before = readFileSync(inTreePrd);
+      await runEval({ taskSet: "A", fixtureDir: FIXTURE_DIR });
+      const after = readFileSync(inTreePrd);
+      expect(after.equals(before)).toBe(true);
+    },
+    30000,
+  );
+});
+
+describe("eval-runner: decideKeepRevert", () => {
+  // Pure decision function — keep iff
+  //   scoreAfter >= scoreBefore && securityBlockSuccess === 1.0 && falsePassRate === 0
+  it("keeps when no regression, full security block, zero false-pass", () => {
+    expect(
+      decideKeepRevert({
+        scoreBefore: 0.8,
+        scoreAfter: 0.9,
+        securityBlockSuccess: 1.0,
+        falsePassRate: 0,
+      }),
+    ).toBe("keep");
+  });
+  it("keeps when scoreAfter == scoreBefore (tie counts as no regression)", () => {
+    expect(
+      decideKeepRevert({
+        scoreBefore: 0.5,
+        scoreAfter: 0.5,
+        securityBlockSuccess: 1.0,
+        falsePassRate: 0,
+      }),
+    ).toBe("keep");
+  });
+  it("reverts when securityBlockSuccess < 1.0 (set-B regression)", () => {
+    expect(
+      decideKeepRevert({
+        scoreBefore: 0.5,
+        scoreAfter: 0.9,
+        securityBlockSuccess: 0.5,
+        falsePassRate: 0,
+      }),
+    ).toBe("revert");
+  });
+  it("reverts when falsePassRate > 0 even with full security block", () => {
+    expect(
+      decideKeepRevert({
+        scoreBefore: 0.5,
+        scoreAfter: 0.9,
+        securityBlockSuccess: 1.0,
+        falsePassRate: 0.1,
+      }),
+    ).toBe("revert");
+  });
+  it("reverts when scoreAfter < scoreBefore (target-metric regression)", () => {
+    expect(
+      decideKeepRevert({
+        scoreBefore: 0.9,
+        scoreAfter: 0.5,
+        securityBlockSuccess: 1.0,
+        falsePassRate: 0,
+      }),
+    ).toBe("revert");
+  });
+});
+
+describe("heal verb: mutation apply/revert leaves working tree clean", () => {
+  // Mutation apply path goes through `git apply` in the orchestrator's cwd.
+  // We verify revert restores the targeted file in a tiny isolated git repo.
+  // Avoids exercising the real heal CLI (which requires a fixture + scheduler
+  // run) — the apply/revert mechanism is the load-bearing piece of issue #14.
+  function git(cwd: string, args: string[]): { status: number | null; stderr: string } {
+    const r = spawnSync("git", args, { cwd, encoding: "utf8" });
+    return { status: r.status, stderr: r.stderr ?? "" };
+  }
+
+  it(
+    "git apply followed by git apply -R leaves no diff",
+    async () => {
+      const repo = await mkdtemp(join(tmpdir(), "sb-heal-mut-"));
+      // bootstrap a tiny git repo
+      git(repo, ["init", "-q"]);
+      git(repo, ["config", "user.email", "test@example.com"]);
+      git(repo, ["config", "user.name", "test"]);
+      const targetPath = join(repo, "target.txt");
+      await writeFile(targetPath, "alpha\nbeta\ngamma\n");
+      git(repo, ["add", "."]);
+      git(repo, ["commit", "-q", "-m", "init"]);
+
+      // Patch in unified-diff format (a single-line addition).
+      const patchPath = join(repo, "..", `mut-${Date.now()}.patch`);
+      const patch = [
+        "diff --git a/target.txt b/target.txt",
+        "--- a/target.txt",
+        "+++ b/target.txt",
+        "@@ -1,3 +1,4 @@",
+        " alpha",
+        " beta",
+        " gamma",
+        "+delta",
+        "",
+      ].join("\n");
+      await writeFile(patchPath, patch);
+
+      const apply = git(repo, ["apply", patchPath]);
+      expect(apply.status).toBe(0);
+      const dirty = git(repo, ["status", "--porcelain"]);
+      expect(dirty.status).toBe(0);
+      // After apply: working tree is dirty.
+      expect(
+        spawnSync("git", ["status", "--porcelain"], { cwd: repo, encoding: "utf8" }).stdout.trim(),
+      ).not.toBe("");
+
+      const revert = git(repo, ["apply", "-R", patchPath]);
+      expect(revert.status).toBe(0);
+      // After revert: working tree is clean.
+      const finalStatus = spawnSync("git", ["status", "--porcelain"], {
+        cwd: repo,
+        encoding: "utf8",
+      }).stdout.trim();
+      expect(finalStatus).toBe("");
+    },
+    15000,
+  );
 });

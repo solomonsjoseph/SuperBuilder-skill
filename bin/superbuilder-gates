@@ -1,47 +1,20 @@
 #!/usr/bin/env bash
-# Run quality gates for a single story. Reads .superbuilder/prd.json and
-# context/gates.json. Captures evidence under .superbuilder/evidence/<US>/.
+# Run quality gates for a single story via the orchestrator's hardened
+# argv-form runGate (allow-list + FORBIDDEN_TOKENS regex enforced). Replaces
+# the previous bash -c shell expansion which bypassed the security boundary.
+#
+# Usage: bin/superbuilder-gates <story-id> [--root <.superbuilder dir>] [--project <projectRoot>]
 set -euo pipefail
 
-story="${1:-}"
-if [[ -z "$story" ]]; then
-  echo "Usage: superbuilder-gates <story-id>" >&2; exit 2
+ROOT="${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+ORCH="$ROOT/orchestrator"
+
+if [[ ! -d "$ORCH/dist" ]]; then
+  if [[ ! -d "$ORCH/node_modules" ]]; then
+    (cd "$ORCH" && (command -v pnpm >/dev/null 2>&1 && pnpm install --frozen-lockfile 2>/dev/null) \
+      || (command -v npm >/dev/null 2>&1 && npm install) ) >&2
+  fi
+  (cd "$ORCH" && npx tsc) >&2
 fi
 
-PRD=".superbuilder/prd.json"
-GATES=".superbuilder/context/gates.json"
-EVID=".superbuilder/evidence/$story"
-
-[[ -f "$PRD" ]]   || { echo "Missing $PRD" >&2; exit 2; }
-[[ -f "$GATES" ]] || { echo "Missing $GATES" >&2; exit 2; }
-mkdir -p "$EVID"
-
-run_gate() {
-  local name="$1"
-  local cmd
-  cmd=$(jq -r --arg n "$name" '.[$n] // ""' "$GATES")
-  if [[ -z "$cmd" || "$cmd" == "null" ]]; then
-    printf '[skip] %s: no command configured\n' "$name" | tee "$EVID/$name.skipped.md"
-    return 0
-  fi
-  printf '[run]  %s: %s\n' "$name" "$cmd"
-  if bash -c "$cmd" >"$EVID/$name.log" 2>&1; then
-    printf '[ok]   %s\n' "$name"
-  else
-    code=$?
-    printf '[fail] %s (exit %d)\n' "$name" "$code"
-    return "$code"
-  fi
-}
-
-failed=0
-for g in typecheck lint format test integrationTest secretScan dependencyAudit licenseCheck performance accessibility browser; do
-  run_gate "$g" || failed=1
-done
-
-if [[ "$failed" -ne 0 ]]; then
-  echo "One or more gates failed. See $EVID/*.log" >&2
-  exit 1
-fi
-
-echo "All configured gates passed for $story."
+exec node "$ORCH/dist/index.js" gates "$@"

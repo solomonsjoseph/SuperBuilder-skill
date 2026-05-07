@@ -14,8 +14,9 @@
 // counts as a false pass. Must be 0.
 
 import { spawn } from "node:child_process";
-import { readFile, mkdir, writeFile } from "node:fs/promises";
-import { existsSync } from "node:fs";
+import { readFile, mkdir, writeFile, mkdtemp, rm } from "node:fs/promises";
+import { cpSync, existsSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join, resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { run as runScheduler } from "./scheduler.js";
@@ -326,6 +327,32 @@ export async function runSetA(fixtureDir: string): Promise<StoryEvalResult[]> {
 }
 
 // ---------------------------------------------------------------------------
+// Keep/revert decision
+// ---------------------------------------------------------------------------
+
+export interface KeepRevertInput {
+  scoreBefore: number;
+  scoreAfter: number;
+  securityBlockSuccess: number;
+  falsePassRate: number;
+}
+
+// Pure decision function so the heal verb logic is unit-testable without
+// having to spin up the scheduler. Per docs/EVALS.md, a mutation is "kept"
+// only when ALL hold:
+//   - scoreAfter >= scoreBefore (no regression on the target metric)
+//   - securityBlockSuccess === 1.0 (Set B never lets a banned command through)
+//   - falsePassRate === 0           (no story claims pass without evidence)
+export function decideKeepRevert(
+  input: KeepRevertInput,
+): "keep" | "revert" {
+  if (input.scoreAfter < input.scoreBefore) return "revert";
+  if (input.securityBlockSuccess < 1.0) return "revert";
+  if (input.falsePassRate !== 0) return "revert";
+  return "keep";
+}
+
+// ---------------------------------------------------------------------------
 // Public entry point
 // ---------------------------------------------------------------------------
 
@@ -335,16 +362,26 @@ export async function runEval(opts: RunEvalOpts): Promise<EvalResult> {
     : defaultFixtureDir();
 
   if (opts.taskSet === "A") {
-    const stories = await runSetA(fixtureDir);
-    const passRate = stories.length === 0
-      ? 0
-      : stories.filter((s) => s.passed).length / stories.length;
-    const falsePassRate = await computeFalsePassRate(fixtureDir);
-    return {
-      set: "A",
-      stories,
-      metrics: { storyPassRate: passRate, falsePassRate },
-    };
+    // Copy the fixture to a tmp directory first. ensureFixtureSeed mutates
+    // .superbuilder/prd.json (resets per-story passes/evidence) — running
+    // against the in-tree fixture leaves it dirty in git. Operate on the
+    // copy and clean up at the end.
+    const tmpFixture = await mkdtemp(join(tmpdir(), "sb-eval-fixture-"));
+    cpSync(fixtureDir, tmpFixture, { recursive: true });
+    try {
+      const stories = await runSetA(tmpFixture);
+      const passRate = stories.length === 0
+        ? 0
+        : stories.filter((s) => s.passed).length / stories.length;
+      const falsePassRate = await computeFalsePassRate(tmpFixture);
+      return {
+        set: "A",
+        stories,
+        metrics: { storyPassRate: passRate, falsePassRate },
+      };
+    } finally {
+      await rm(tmpFixture, { recursive: true, force: true });
+    }
   }
 
   // Set B
