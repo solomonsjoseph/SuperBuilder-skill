@@ -248,3 +248,42 @@ run_with() {
   [ "$status" -eq 0 ]
   [ -z "$output" ]
 }
+
+# ---- Variable-indirection bypass (TVS-002) ----
+
+@test "denies: variable-indirection rm -rf (simple: \$X \$Y)" {
+  run run_with 'X=rm; Y=-rf; $X $Y /tmp/test'
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"deny"* ]]
+}
+
+@test "denies: variable-indirection rm -rf (medium: \${A}\${B})" {
+  run run_with 'A=r; B=m; C=-rf; ${A}${B} $C /tmp/test'
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"deny"* ]]
+}
+
+@test "denies: variable-indirection rm -rf (eval-wrapped via existing eval block)" {
+  # eval is independently blocked; this asserts the layered defense holds.
+  run run_with "eval \"\$(echo 'rm -rf /tmp/test')\""
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"deny"* ]]
+}
+
+@test "denies: variable-indirection git push --force" {
+  run run_with 'P=push; F=--force; git $P $F origin main'
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"deny"* ]]
+}
+
+@test "denies: variable-indirection quoted assignment" {
+  run run_with 'X="rm"; Y="-rf"; $X $Y /tmp/test'
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"deny"* ]]
+}
+
+@test "allows: harmless variable assignment without dangerous expansion" {
+  run run_with 'X=hello; echo $X'
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+}
