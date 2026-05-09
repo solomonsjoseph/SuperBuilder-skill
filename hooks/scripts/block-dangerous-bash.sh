@@ -52,6 +52,28 @@ if [[ "$cmd" =~ (^|[[:space:]\;\&\|])rm[[:space:]] ]] && \
   deny "rm with recursive+force is blocked. Use a non-recursive form or remove specific files."
 fi
 
+# Semantically-equivalent destruction without an 'rm' token (TVS-004).
+# find ... -delete deletes files without invoking rm.
+if [[ "$cmd" =~ (^|[[:space:]\;\&\|])find([[:space:]]|$) ]] && \
+   [[ "$cmd" =~ (^|[[:space:]])-delete([[:space:]]|$) ]]; then
+  deny "find -delete is blocked (semantically equivalent to rm -rf). Remove specific files explicitly."
+fi
+# find ... -exec rm / -execdir rm
+if [[ "$cmd" =~ (^|[[:space:]\;\&\|])find([[:space:]]|$) ]] && \
+   [[ "$cmd" =~ -exec(dir)?[[:space:]]+rm([[:space:]]|$) ]]; then
+  deny "find -exec rm is blocked (semantically equivalent to rm -rf). Remove specific files explicitly."
+fi
+# xargs ... rm (covers find ... | xargs rm and find -print0 | xargs -0 rm)
+if [[ "$cmd" =~ (^|[[:space:]\;\&\|])xargs([[:space:]]|$) ]] && \
+   [[ "$cmd" =~ (^|[[:space:]\;\&\|])rm([[:space:]]|$) ]]; then
+  deny "xargs piping into rm is blocked (semantically equivalent to rm -rf). Remove specific files explicitly."
+fi
+# GNU parallel ... rm
+if [[ "$cmd" =~ (^|[[:space:]\;\&\|])parallel([[:space:]]|$) ]] && \
+   [[ "$cmd" =~ (^|[[:space:]\;\&\|])rm([[:space:]]|$) ]]; then
+  deny "parallel piping into rm is blocked. Remove specific files explicitly."
+fi
+
 # Force pushes (all variants)
 if [[ "$cmd" =~ git[[:space:]]+push[[:space:]]+.*--force-with-lease ]]; then
   deny "git push --force-with-lease is blocked. Open a PR or request explicit approval."
