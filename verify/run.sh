@@ -11,6 +11,18 @@ VDIR="$ROOT/verify"
 EDIR="$VDIR/evidence"
 mkdir -p "$EDIR"
 
+# Portable SHA-256: prefer shasum (macOS default), fall back to sha256sum (Linux default).
+sha256() {
+  if command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "$@"
+  elif command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$@"
+  else
+    echo "TVS: no SHA-256 tool found (need shasum or sha256sum)" >&2
+    exit 2
+  fi
+}
+
 CONTROLS="$VDIR/CONTROLS.json"
 if [[ ! -f "$CONTROLS" ]]; then
   echo "TVS: CONTROLS.json missing" >&2
@@ -58,9 +70,9 @@ done < <(jq -c '.controls[]' "$CONTROLS")
 # Hash chain over evidence files (sorted by id).
 chain=""
 for f in $(ls "$EDIR"/TVS-*.json 2>/dev/null | sort); do
-  chain="$chain$(shasum -a 256 "$f" | awk '{print $1}')"
+  chain="$chain$(sha256 "$f" | awk '{print $1}')"
 done
-root_hash=$(printf '%s' "$chain" | shasum -a 256 | awk '{print $1}')
+root_hash=$(printf '%s' "$chain" | sha256 | awk '{print $1}')
 
 jq -n \
   --arg ts "$ts" --argjson total "$total" --argjson passed "$passed" \

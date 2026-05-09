@@ -1,0 +1,25 @@
+name: TVS
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  verify:
+    name: verify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install jq and bats
+        run: sudo apt-get update && sudo apt-get install -y jq bats
+      - name: Run Trust Verification Suite
+        run: bash verify/run.sh
+      - name: Upload TVS evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tvs-evidence
+          path: |
+            verify/MANIFEST.json
+            verify/evidence/
