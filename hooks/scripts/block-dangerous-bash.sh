@@ -21,6 +21,90 @@ deny() {
   exit 0
 }
 
+# Resolve simple variable-indirection bypasses deterministically.
+# Walks the command, collects bare `VAR=value` assignments (separated by
+# `;`, `&&`, `||`, `&`, `|`, or newline), and substitutes occurrences of
+# `$VAR` / `${VAR}` in the rest of the command. The resolved form is then
+# scanned alongside the original by every pattern below. We do NOT execute
+# the user's input — just static substitution. Deterministic, no eval.
+resolve_indirection() {
+  local raw="$1"
+  local resolved="$raw"
+  # Use parallel arrays (bash 3.2 compatible — no associative arrays).
+  local var_names=()
+  local var_values=()
+  local trimmed name value
+  # Translate separators (; && || | & newline) into NUL so we can iterate.
+  # Only "bare" VAR=val tokens at the start of a segment (after optional
+  # whitespace) are treated as assignments. Multi-char separators handled
+  # by sed first.
+  # Use a printable rare separator (vertical tab) since macOS sed handles
+  # \x00 inconsistently. Replace each shell separator with VT, then split.
+  local SEP=$'\v'
+  local stream
+  # awk handles multi-char separator replacement portably across BSD/GNU.
+  stream=$(printf '%s' "$raw" | awk -v sep="$SEP" '{
+    gsub(/&&/, sep);
+    gsub(/\|\|/, sep);
+    gsub(/;/,  sep);
+    gsub(/&/,  sep);
+    gsub(/\|/, sep);
+    print
+  }')
+  local IFS_OLD="$IFS"
+  IFS="$SEP"$'\n'
+  # shellcheck disable=SC2206
+  local segments=( $stream )
+  IFS="$IFS_OLD"
+  local s
+  for s in "${segments[@]}"; do
+    # Trim leading/trailing whitespace
+    trimmed="${s#"${s%%[![:space:]]*}"}"
+    trimmed="${trimmed%"${trimmed##*[![:space:]]}"}"
+    # Match VAR=value (no spaces around =, simple unquoted or quoted value)
+    if [[ "$trimmed" =~ ^([A-Za-z_][A-Za-z0-9_]*)=(.*)$ ]]; then
+      name="${BASH_REMATCH[1]}"
+      value="${BASH_REMATCH[2]}"
+      # Strip surrounding single or double quotes if present
+      if [[ "$value" =~ ^\"(.*)\"$ ]]; then
+        value="${BASH_REMATCH[1]}"
+      elif [[ "$value" =~ ^\'(.*)\'$ ]]; then
+        value="${BASH_REMATCH[1]}"
+      fi
+      var_names+=( "$name" )
+      var_values+=( "$value" )
+    fi
+  done
+  # Apply substitutions iteratively until fixed point (handles ${A}${B}).
+  local prev=""
+  local i=0
+  local n=${#var_names[@]}
+  local k
+  while [[ "$resolved" != "$prev" && $i -lt 10 ]]; do
+    prev="$resolved"
+    for (( k=0; k<n; k++ )); do
+      name="${var_names[$k]}"
+      value="${var_values[$k]}"
+      # Replace ${NAME}
+      resolved="${resolved//\$\{$name\}/$value}"
+      # Replace $NAME with sed (word-boundary on identifier char).
+      # Escape value for sed replacement: backslash, slash, ampersand.
+      local esc="${value//\\/\\\\}"
+      esc="${esc//\//\\/}"
+      esc="${esc//&/\\&}"
+      resolved=$(printf '%s' "$resolved" | sed -E "s/\\\$$name([^A-Za-z0-9_]|\$)/$esc\\1/g")
+    done
+    i=$((i + 1))
+  done
+  printf '%s' "$resolved"
+}
+
+resolved_cmd=$(resolve_indirection "$cmd")
+# Scan combined surface so patterns below see both forms.
+if [[ "$resolved_cmd" != "$cmd" ]]; then
+  cmd="$cmd"$'\n'"$resolved_cmd"
+fi
+
 # Indirection: block outright (must come before other checks).
 # The split-quote e''val / e""val is intentional: it prevents the literal
 # token from appearing in this source file (so a grep of the codebase
