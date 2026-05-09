@@ -10,6 +10,12 @@ The user's idea (may be empty if they want to provide it conversationally): $ARG
 
 ## Mandatory order
 
+0. **Detect the user's starting point.** Use `AskUserQuestion` to ask:
+   > "Do you have a clear picture of what you want to build technically, or would you like to figure it out together?"
+
+   - If "clear picture" → proceed to step 1 (`00-intake-refine`).
+   - If "figure it out together" → **invoke the `00-discovery` skill** instead. The discovery skill will produce `.superbuilder/discovery.md` (plain-English record) and `.superbuilder/intake.md` (pipeline handoff). When it completes, skip step 1 and proceed directly to step 2.
+
 1. **Invoke the `00-intake-refine` skill** to grill the idea. If the idea is vague, refuse to proceed until the success criteria, primary user, and out-of-scope items are explicit. Push back on anything overbuilt or under-scoped. Use `AskUserQuestion` for the smallest set of blocking questions.
 2. **Invoke the `01-context-sync` skill** to map the target project (or confirm greenfield). Detect package manager via the order documented in the skill — never hardcode npm/pnpm/yarn/bun.
 3. **Invoke the `02-write-prd` skill** to produce a PRD. The PRD must explicitly mark `riskLevel`, `deploymentAllowed: false`, and `humanApprovalRequiredFor`.

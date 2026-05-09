@@ -1,0 +1,190 @@
+{
+  "$schema": "https://superbuilder.local/schemas/trust-verification-suite/v0.json",
+  "version": "0.1.0-draft",
+  "description": "Trust Verification Suite (TVS) — every documented security control mapped to a runnable check. Run via verify/run.sh. Each check writes evidence to verify/evidence/<id>.json. Suite must be green before any release.",
+  "controls": [
+    {
+      "id": "TVS-001",
+      "title": "Deterministic deny-list blocks literal rm -rf",
+      "citation": "docs/SECURITY.md L23-37 (block lists)",
+      "framework": "OWASP ASVS V12.3 (File Execution)",
+      "check": "checks/deny-rm-rf-literal.sh",
+      "expected": "deny",
+      "severity": "critical"
+    },
+    {
+      "id": "TVS-002",
+      "title": "Deterministic deny-list resists variable-indirection bypass",
+      "citation": "docs/SECURITY.md L23-37 + threat model T0040",
+      "framework": "MITRE ATLAS T0040 (Agent Escape to Host)",
+      "check": "checks/deny-rm-rf-var-indirection.sh",
+      "expected": "deny",
+      "severity": "critical",
+      "known_status": "FAILING in v0.1 (proven empirically 2026-05-09)"
+    },
+    {
+      "id": "TVS-003",
+      "title": "Deterministic deny-list resists alias bypass",
+      "citation": "docs/SECURITY.md L23-37",
+      "framework": "MITRE ATLAS T0040",
+      "check": "checks/deny-rm-rf-alias.sh",
+      "expected": "deny",
+      "severity": "critical",
+      "known_status": "FAILING in v0.1"
+    },
+    {
+      "id": "TVS-004",
+      "title": "Deterministic deny-list catches semantically-equivalent destruction (find -delete)",
+      "citation": "docs/SECURITY.md L23-37",
+      "framework": "MITRE ATLAS T0040",
+      "check": "checks/deny-find-delete.sh",
+      "expected": "deny",
+      "severity": "critical",
+      "known_status": "FAILING in v0.1"
+    },
+    {
+      "id": "TVS-005",
+      "title": "Deny-list fails CLOSED on malformed input (jq parse error)",
+      "citation": "docs/SECURITY.md L41 (advisory hook caveat)",
+      "framework": "NIST SP 800-218A PW.5.1",
+      "check": "checks/deny-malformed-fail-closed.sh",
+      "expected": "non-zero-exit-or-deny",
+      "severity": "high"
+    },
+    {
+      "id": "TVS-006",
+      "title": "Tamper-block fails CLOSED when CLAUDE_PLUGIN_ROOT unset",
+      "citation": "hooks/tests/block-secret-writes.bats test 55",
+      "framework": "NIST SP 800-218A PW.4.1",
+      "check": "checks/tamper-block-no-env.sh",
+      "expected": "deny",
+      "severity": "high",
+      "known_status": "FAILING in v0.1 (test 55 codifies fall-through)"
+    },
+    {
+      "id": "TVS-007",
+      "title": "Stop hook fails LOUD on corrupt prd.json",
+      "citation": "hooks/tests/load-context.bats test 60 (known issue)",
+      "framework": "NIST SP 800-218A PS.3.2",
+      "check": "checks/stop-hook-corrupt-prd.sh",
+      "expected": "non-zero-exit",
+      "severity": "medium",
+      "known_status": "FAILING in v0.1"
+    },
+    {
+      "id": "TVS-008",
+      "title": "Sandcastle pin is exact (no caret/tilde drift)",
+      "citation": "observation 940 (sandcastle 0.5.10 broke API)",
+      "framework": "NIST SP 800-218A PO.5.1, SLSA L3 dependency pinning",
+      "check": "checks/sandcastle-pin-exact.sh",
+      "expected": "exact-version",
+      "severity": "high",
+      "known_status": "FAILING in v0.1 (^0.5.8 allows 0.5.10)"
+    },
+    {
+      "id": "TVS-009",
+      "title": "SBOM artifact present and current",
+      "citation": "docs/SECURITY.md L190 (KEV awareness — SBOM enables cross-ref)",
+      "framework": "NTIA Minimum Elements for SBOM, EO 14028 §4(e)(vii)",
+      "check": "checks/sbom-present.sh",
+      "expected": "file-exists",
+      "severity": "high",
+      "known_status": "FAILING in v0.1 (no SBOM committed)"
+    },
+    {
+      "id": "TVS-010",
+      "title": "SLSA L3+ provenance attestation present",
+      "citation": "docs/SECURITY.md L166 (planned v1.0)",
+      "framework": "SLSA v1.0 Build L3, EO 14028 §4(e)(vi)",
+      "check": "checks/slsa-provenance.sh",
+      "expected": "attestation-file",
+      "severity": "high",
+      "known_status": "FAILING in v0.1 (planned v1.0)"
+    },
+    {
+      "id": "TVS-011",
+      "title": "Policy hash covers ALL trust-boundary fields (not just 4)",
+      "citation": "orchestrator/src/security.ts L11-16",
+      "framework": "NIST SP 800-53 SI-7 (Software Integrity)",
+      "check": "checks/policy-hash-coverage.sh",
+      "expected": "extended-fields",
+      "severity": "medium",
+      "known_status": "PARTIAL in v0.1 (covers 4 fields; stories/allow-list/scope NOT covered)"
+    },
+    {
+      "id": "TVS-012",
+      "title": "FIPS 140-3 validated crypto module in policy hash path",
+      "citation": "NSA CNSSP-15, FIPS 140-3 Annex A",
+      "framework": "FIPS 140-3, CMMC 2.0 SC.L2-3.13.11",
+      "check": "checks/fips-crypto-module.sh",
+      "expected": "fips-validated",
+      "severity": "medium",
+      "known_status": "FAILING in v0.1 (uses Node stdlib via OpenSSL non-FIPS build)"
+    },
+    {
+      "id": "TVS-013",
+      "title": "Two-person rule enforced for policy mutations in AFK",
+      "citation": "design proposal (this conversation)",
+      "framework": "NIST SP 800-53 AC-3(2), CNSSI 1253 dual-control",
+      "check": "checks/two-person-rule.sh",
+      "expected": "dual-approval-required",
+      "severity": "high",
+      "known_status": "MISSING in v0.1"
+    },
+    {
+      "id": "TVS-014",
+      "title": "Approval records cryptographically signed (not plain JSON)",
+      "citation": "docs/SECURITY.md L68 (.superbuilder/approvals/)",
+      "framework": "NIST SP 800-53 AU-10 (Non-repudiation)",
+      "check": "checks/approvals-signed.sh",
+      "expected": "signed-jws",
+      "severity": "medium",
+      "known_status": "MISSING in v0.1"
+    },
+    {
+      "id": "TVS-015",
+      "title": "Evidence bundles hash-chained (Merkle / append-only)",
+      "citation": "design proposal (this conversation)",
+      "framework": "NIST SP 800-53 AU-9 (Audit Trail Protection)",
+      "check": "checks/evidence-merkle.sh",
+      "expected": "chain-intact",
+      "severity": "medium",
+      "known_status": "MISSING in v0.1"
+    },
+    {
+      "id": "TVS-016",
+      "title": "Existing vitest suite passes (153/154 baseline)",
+      "citation": "orchestrator/src/*.test.ts",
+      "framework": "NIST SP 800-218A PW.7.1",
+      "check": "checks/vitest-baseline.sh",
+      "expected": "all-pass",
+      "severity": "high"
+    },
+    {
+      "id": "TVS-017",
+      "title": "Existing bats suite passes (60/60 baseline)",
+      "citation": "hooks/tests/*.bats",
+      "framework": "NIST SP 800-218A PW.7.1",
+      "check": "checks/bats-baseline.sh",
+      "expected": "all-pass",
+      "severity": "high"
+    },
+    {
+      "id": "TVS-018",
+      "title": "Stop-hook integration: TVS suite gate",
+      "citation": "design proposal — TVS itself runs as Stop-hook",
+      "framework": "NIST SP 800-218A RV.3.4 (continuous verification)",
+      "check": "checks/tvs-stop-hook-integrated.sh",
+      "expected": "registered",
+      "severity": "high",
+      "known_status": "MISSING in v0.1"
+    }
+  ],
+  "summary": {
+    "total": 18,
+    "passing_v01": 2,
+    "failing_v01": 11,
+    "missing_v01": 5,
+    "interpretation": "Of 18 trust controls mapped to documented security claims, only 2 are verifiable as passing in v0.1. 11 are verifiable as failing (each with concrete evidence). 5 are missing entirely. This is the gap between design language and implementation reality."
+  }
+}

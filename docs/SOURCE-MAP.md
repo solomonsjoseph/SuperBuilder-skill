@@ -100,7 +100,7 @@ The bootstrap `.superbuilder/source-lock.json` pins each source. Run
 **Adapted:** branch policy (`superbuilder/<US-id>-<slug>`), provider policy (docker/podman/vercel), package-manager auto-detection.
 **Rejected:** `noSandbox()` for autonomous execution.
 
-**Verified API surface (pinned `@ai-hero/sandcastle` ^0.5.8, 2026-05-07):**
+**Verified API surface (pinned `@ai-hero/sandcastle` ~0.5.8 patch-only, 2026-05-07):**
 - Top-level exports: `run`, `createSandbox`, `claudeCode`, `interactive`, `createWorktree`, plus agent providers `codex`/`opencode`/`pi`.
 - Provider subpath exports: `./sandboxes/docker` (`docker()`), `./sandboxes/podman` (`podman()`), `./sandboxes/vercel` (`vercel()`), `./sandboxes/daytona` (`daytona()`), `./sandboxes/no-sandbox`.
 - `createSandbox({ branch, sandbox, cwd?, hooks?, copyToWorktree?, timeouts? })` returns a `Sandbox` with `branch`, `worktreePath`, `run()`, `interactive()`, `close()`, `[Symbol.asyncDispose]`.
@@ -117,7 +117,7 @@ The bootstrap `.superbuilder/source-lock.json` pins each source. Run
 ### karpathy/autoresearch
 **Kept:** the protocol — editable surface → fixed-budget eval → objective score → keep/revert.
 **Adapted:** mapped to skill/agent/prompt edits with safety regression as a hard gate.
-**Rejected:** importing autoresearch as code; the protocol is encoded in `10-self-improve` and the `self-improvement-researcher` agent.
+**Rejected:** importing autoresearch as code; the protocol is encoded in `10-self-improve` and the `self-improvement-researcher` agent. **License note:** README states MIT but no LICENSE file exists — copy patterns only, not verbatim code, until a LICENSE file is confirmed.
 
 ## Update workflow
 

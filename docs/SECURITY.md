@@ -153,9 +153,59 @@ This lets reviewers see exactly what ran during a story without replaying the ru
 
 **Removing high-risk programs.** If running `npx`/`node`/`make`/etc. is undesirable for a project, either remove them from the PRD's `qualityGates` or rely on project-level script wrappers (e.g., `./scripts/test.sh`) that are not themselves in `HIGH_RISK_PROGRAMS`.
 
+## MITRE ATLAS v5.6.0 Threat Coverage
+
+MITRE ATLAS v5.6.0 (May 4, 2026) documents active adversarial ML/AI techniques. (Supersedes v5.4.0 Feb 2026 and v5.5.0 Mar 2026.) Key techniques and SuperBuilder's defense posture:
+
+| Technique | Relevance | Current Defense | Planned Version |
+|---|---|---|---|
+| T0043 — Indirect Prompt Injection via MCP | HIGH | None — MCP output is not content-scanned | v0.2: `mcp-guard.ts` content scan |
+| T0044 — MCP Server Compromise | HIGH | MCP calls not audited; no opt-in gate | v0.2: `mcp-guard.ts` opt-in + audit log |
+| T0040 — Agent Escape to Host | HIGH | Sandcastle sandbox (currently broken — immediate fix required) | Immediate: fix `sandcastle-runner.ts` |
+| T0041 — Memory Manipulation via MEMORY.md | CRITICAL | None — MEMORY.md contents not hash-validated | v0.2: `memory-guard.ts` HMAC validation |
+| T0035 — Supply Chain Compromise of Plugin | HIGH | No SBOM, no SLSA provenance | v1.0: SBOM + SLSA Level 3 |
+| T0029 — Credential Exfiltration via Agent | HIGH | `block-secret-writes.sh` blocks .env writes | v0.2: MCP audit log closes exfil via MCP |
+| T0031 — Adversarial Inputs via External Data | MEDIUM | `validate.ts` blocks shell metacharacters in PRD gate commands | v0.2: research dossier content scanning |
+| T0038 — Model Denial of Service | LOW | Per-story `maxAttempts`; no API cost ceiling | v1.0: token/cost ceiling |
+
+## Audit Log Format
+
+All SuperBuilder runtime audit artifacts use **structured JSON-lines** with **UTC ISO-8601 timestamps** for compatibility with federal SIEM ingestion under OMB M-21-31 (August 2021).
+
+| File | Format | Key fields |
+|---|---|---|
+| `.superbuilder/progress.jsonl` | JSON-lines | `ts` (ISO-8601), `storyId`, `iter`, `status`, `hash` |
+| `.superbuilder/approvals/*.json` | JSON (single record) | `ts`, `storyId`, `approvedBy`, `action` |
+| Gate `.log` files | Plain text header + output | `gate-audit:` and `gate-command:` prefix lines |
+| `.superbuilder/agent-registry.jsonl` (v0.2) | JSON-lines | `ts`, `subagentId`, `event` (`start`\|`end`), `parentRunId` |
+| `.superbuilder/mcp-audit.jsonl` (v0.2) | JSON-lines | `ts`, `server`, `tool`, `args_hash`, `session_id` |
+| `.superbuilder/memory-audit.jsonl` (v0.2) | JSON-lines | `ts`, `entryId`, `hmac`, `content_scan_result` |
+
+**Agency retention obligation:** SuperBuilder does not enforce log retention. The deploying agency is responsible for ingesting these logs into their SIEM and retaining them per OMB M-21-31 (EL3 Advanced tier): **12 months active/hot storage**, **18 months cold archive**. All log files use printable ASCII with UTC ISO-8601 timestamps — no binary encoding — to ensure SIEM compatibility.
+
+## Known Exploited Vulnerabilities (KEV) Awareness
+
+CISA BOD 22-01 (November 2021, continuously updated) creates two KEV exposure vectors for SuperBuilder:
+
+**Vector 1 — Plugin's own dependencies:** Any npm package in SuperBuilder's dependency tree that appears in the CISA KEV catalog triggers a 2-week remediation obligation for deploying agencies. The SBOM (v1.0) enables agencies to cross-reference SuperBuilder's dependencies. SuperBuilder's CI pipeline (v1.0) includes a `trivy` scan against CRITICAL/HIGH CVEs cross-referenced with the KEV catalog as a release gate.
+
+**Vector 2 — Generated code imports:** The security-auditor agent (v0.4+) checks generated `import`, `require`, `pip install`, and `cargo add` statements against the CISA KEV catalog. Any generated code that references a package with an active Critical or High KEV entry is flagged as a finding. Version specifications pinned to a KEV-affected version are also flagged. This is the most commonly missed review item for AI code generation tools.
+
+## Coordinated Vulnerability Disclosure
+
+To report a security vulnerability in SuperBuilder:
+
+1. **Do not open a public GitHub issue.** Open a [GitHub Security Advisory](../../security/advisories/new) instead.
+2. Include: affected component, reproduction steps, potential impact, and suggested fix (if known).
+3. Expected response: acknowledgment within 72 hours; status update within 7 days.
+4. Disclosure policy: fixes are shipped before public disclosure; CVE requested if CVSS ≥ 7.0.
+
+This policy satisfies the CVD requirement in the NSA/CISA/ODNI "Securing the Software Supply Chain: Recommended Practices for Developers" (September 2022).
+
 ## What we explicitly do NOT promise
 
 - No protection against an authenticated user *manually* typing dangerous commands outside Claude Code; the hooks only run when the agent invokes a tool.
 - No defense against a compromised upstream source if the user disables `/supersources` review.
 - No prevention of resource exhaustion attacks via the `tokenCost` metric — Superbuilder optimizes away from cost growth, but does not enforce hard limits.
 - No defense against a malicious prompt that convinces the user to override the hooks. The user is sovereign.
+- No defense against side-channel timing attacks on encrypted API traffic. The Whisper Leak technique (arxiv:2511.03675, November 2025) achieves 98%+ accuracy inferring prompt topics from token-timing patterns in encrypted traffic without decryption. No complete mitigation exists. For classified or sensitive environments, traffic padding or request batching is recommended. This is an accepted residual risk per NIST SP 800-218A known-limitation disclosure requirements.
