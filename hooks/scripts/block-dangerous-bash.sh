@@ -21,6 +21,76 @@ deny() {
   exit 0
 }
 
+# --- Alias / function expansion (TVS-003) -----------------------------------
+# Defeat shell-alias and function-definition bypasses such as:
+#   alias DEL="rm -rf"; DEL /tmp/x                              # simple
+#   alias D='rm'; alias R='-rf'; D R /tmp/x                     # medium
+#   function D() { rm -rf "$@"; }; D /tmp/x                     # hard
+#
+# Strategy: extract every alias/function body declared in the command, then
+# substitute their tokens inline (capped iterations so a malicious recursive
+# definition cannot loop forever). The resulting string is what the deny
+# patterns below are evaluated against.
+expand_aliases_and_functions() {
+  local input_cmd="$1"
+  local expanded="$input_cmd"
+  # Concatenate every body discovered, so even if substitution misses an
+  # edge case the deny matcher still sees the literal body text.
+  local appended=""
+
+  # Match: alias NAME='BODY'  or  alias NAME="BODY"
+  # POSIX-ish; works on bash 3.2 (macOS).
+  while IFS= read -r line; do
+    [[ -z "$line" ]] && continue
+    appended+=" ; $line"
+  done < <(printf '%s\n' "$input_cmd" \
+    | grep -oE "alias[[:space:]]+[A-Za-z_][A-Za-z0-9_]*=('[^']*'|\"[^\"]*\")" \
+    | sed -E "s/^alias[[:space:]]+[A-Za-z_][A-Za-z0-9_]*=['\"]?//; s/['\"]\$//")
+
+  # Match: function NAME() { BODY; }  or  NAME() { BODY; }
+  while IFS= read -r line; do
+    [[ -z "$line" ]] && continue
+    appended+=" ; $line"
+  done < <(printf '%s\n' "$input_cmd" \
+    | grep -oE "(function[[:space:]]+)?[A-Za-z_][A-Za-z0-9_]*[[:space:]]*\([[:space:]]*\)[[:space:]]*\{[^}]*\}" \
+    | sed -E "s/.*\\{[[:space:]]*//; s/[[:space:]]*\\}\$//")
+
+  # Inline alias substitution (bounded iterations).
+  local i=0
+  while [[ $i -lt 8 ]]; do
+    local before="$expanded"
+    # For each alias declaration, replace later standalone occurrences of
+    # NAME with its BODY in $expanded.
+    while IFS=$'\t' read -r name body; do
+      [[ -z "$name" ]] && continue
+      # Replace whole-word NAME with BODY. Bash 3.2-compatible loop.
+      local out="" rest="$expanded"
+      while [[ "$rest" =~ (^|[[:space:];\&\|\(])${name}([[:space:];\&\|\)]|$) ]]; do
+        local m="${BASH_REMATCH[0]}"
+        local pre="${rest%%"$m"*}"
+        local lead="${BASH_REMATCH[1]}"
+        local trail="${BASH_REMATCH[2]}"
+        out+="${pre}${lead}${body}${trail}"
+        rest="${rest#*"$m"}"
+      done
+      out+="$rest"
+      expanded="$out"
+    done < <(printf '%s\n' "$input_cmd" \
+      | grep -oE "alias[[:space:]]+[A-Za-z_][A-Za-z0-9_]*=('[^']*'|\"[^\"]*\")" \
+      | sed -E "s/^alias[[:space:]]+([A-Za-z_][A-Za-z0-9_]*)=['\"]?(.*)['\"]\$/\\1\t\\2/")
+    [[ "$expanded" == "$before" ]] && break
+    i=$((i + 1))
+  done
+
+  printf '%s%s' "$expanded" "$appended"
+}
+
+# Build the expanded view used for deny-pattern matching. Original $cmd is
+# kept untouched for messages, but $cmd is reassigned to the expanded form
+# so every existing pattern below also covers alias/function bypasses.
+cmd_original="$cmd"
+cmd="$(expand_aliases_and_functions "$cmd")"
+
 # Indirection: block outright (must come before other checks).
 # The split-quote e''val / e""val is intentional: it prevents the literal
 # token from appearing in this source file (so a grep of the codebase

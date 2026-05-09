@@ -223,6 +223,32 @@ run_with() {
   [[ "$output" == *"deny"* ]]
 }
 
+# ---- TVS-003: alias / function bypass ----
+
+@test "denies: alias DEL=\"rm -rf\"; DEL /tmp/test (simple alias bypass)" {
+  run run_with 'alias DEL="rm -rf"; DEL /tmp/test'
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"deny"* ]]
+}
+
+@test "denies: alias D='rm'; alias R='-rf'; D R /tmp/test (medium split-alias bypass)" {
+  run run_with "alias D='rm'; alias R='-rf'; D R /tmp/test"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"deny"* ]]
+}
+
+@test "denies: function D() { rm -rf \"\$@\"; }; D /tmp/test (hard function bypass)" {
+  run run_with 'function D() { rm -rf "$@"; }; D /tmp/test'
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"deny"* ]]
+}
+
+@test "denies: D() { rm -rf \"\$@\"; }; D /tmp/test (function w/o function keyword)" {
+  run run_with 'D() { rm -rf "$@"; }; D /tmp/test'
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"deny"* ]]
+}
+
 # ---- ALLOWS (negatives: empty stdout) ----
 
 @test "allows: rm /tmp/foo (non-recursive)" {
@@ -245,6 +271,18 @@ run_with() {
 
 @test "allows: ordinary cat README.md" {
   run run_with 'cat README.md'
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+}
+
+@test "allows: harmless alias for ls" {
+  run run_with 'alias l="ls -la"; l /tmp'
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+}
+
+@test "allows: harmless function" {
+  run run_with 'greet() { echo hi; }; greet'
   [ "$status" -eq 0 ]
   [ -z "$output" ]
 }
