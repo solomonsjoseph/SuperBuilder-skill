@@ -65,6 +65,37 @@ run_with() {
   [[ "$output" == *"deny"* ]]
 }
 
+# TVS-004: semantically-equivalent destruction without an 'rm' token
+@test "denies: find -delete (TVS-004 simple)" {
+  run run_with 'find /tmp/test -delete'
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"deny"* ]]
+}
+
+@test "denies: find -exec rm (TVS-004 medium)" {
+  run run_with 'find /tmp/test -type f -exec rm {} +'
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"deny"* ]]
+}
+
+@test "denies: find -print0 | xargs -0 rm -f (TVS-004 hard)" {
+  run run_with 'find /tmp/test -type f -print0 | xargs -0 rm -f'
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"deny"* ]]
+}
+
+@test "denies: find -execdir rm" {
+  run run_with 'find /tmp/test -type f -execdir rm {} +'
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"deny"* ]]
+}
+
+@test "denies: parallel rm" {
+  run run_with 'ls | parallel rm {}'
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"deny"* ]]
+}
+
 @test "denies: cat .env" {
   run run_with 'cat .env'
   [ "$status" -eq 0 ]
